@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Generated artifacts / local workspaces
+*.zip
+*.7z
+*.3ds
+*.cia
+*.cxi
+*.app
+.eouhd/
+azahar_pack/
+azahar_pack_master/
+output/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
