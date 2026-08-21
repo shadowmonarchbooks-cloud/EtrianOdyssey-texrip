@@ -1,0 +1,1 @@
+# EtrianOdyssey-texrip
