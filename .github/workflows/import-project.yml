@@ -1,0 +1,41 @@
+name: Import project source
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Expand project source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap/payload.part* | tr -d '\n\r' | base64 -d > /tmp/eou-project.tar.xz
+          mkdir -p /tmp/eou-project
+          tar -xJf /tmp/eou-project.tar.xz -C /tmp/eou-project
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/eou-project/. .
+          git status --short
+
+      - name: Commit imported source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Import Etrian Odyssey HD Texture Extractor 0.12 source [skip ci]"
+          git push origin HEAD:main
