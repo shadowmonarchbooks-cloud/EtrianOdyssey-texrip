@@ -1,4 +1,9 @@
-__version__ = '0.12.0'
+from __future__ import annotations
+
+import json as _json
+from pathlib import Path as _Path
+
+from .version import __version__, DISPLAY_VERSION, LEGACY_REFERENCE_VERSION
 
 # 0.13 freezes the existing parser implementation while hardening destructive
 # workspace boundaries through compatibility overlays. Keeping the legacy
@@ -44,3 +49,58 @@ def _material_safe_cleanup_streamlined_workspace(root):
 
 _workspace.cleanup_streamlined_workspace = _material_safe_cleanup_streamlined_workspace
 del _install_materials_overhaul
+
+# Keep code-facing version metadata centralized even when frozen legacy call
+# sites still pass their historical 0.12.0 literal.
+_legacy_save_manifest = _workspace.save_manifest
+_legacy_write_pack_metadata = _workspace._write_pack_metadata
+
+
+def _versioned_save_manifest(
+    workspace, title_id, assets, source_rom='', version=__version__,
+    game_profile=None, product_code='',
+):
+    effective = __version__ if not version or version == LEGACY_REFERENCE_VERSION else version
+    return _legacy_save_manifest(
+        workspace, title_id, assets, source_rom, effective, game_profile, product_code
+    )
+
+
+def _versioned_write_pack_metadata(
+    pack_root, title_id, version=__version__, game_name='', textures=None,
+):
+    effective = __version__ if not version or version == LEGACY_REFERENCE_VERSION else version
+    return _legacy_write_pack_metadata(pack_root, title_id, effective, game_name, textures)
+
+
+_workspace.save_manifest = _versioned_save_manifest
+_workspace._write_pack_metadata = _versioned_write_pack_metadata
+
+
+def _stamp_generated_metadata(root) -> None:
+    root = _Path(root)
+    for base in (root / '.eouhd' / 'reports', root / '.eouhd' / 'diagnostics'):
+        if not base.exists():
+            continue
+        for path in base.rglob('*.json'):
+            try:
+                data = _json.loads(path.read_text(encoding='utf-8'))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            data['version'] = __version__
+            data.setdefault('legacy_reference_version', LEGACY_REFERENCE_VERSION)
+            path.write_text(_json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+_current_cleanup_streamlined_workspace = _workspace.cleanup_streamlined_workspace
+
+
+def _versioned_cleanup_streamlined_workspace(root):
+    result = _current_cleanup_streamlined_workspace(root)
+    _stamp_generated_metadata(root)
+    return result
+
+
+_workspace.cleanup_streamlined_workspace = _versioned_cleanup_streamlined_workspace
