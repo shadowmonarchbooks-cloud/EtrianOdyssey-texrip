@@ -10,7 +10,7 @@ pub mod ncch;
 pub mod ncsd;
 pub mod romfs;
 
-use eo_core::GameIdentity;
+use eo_core::{GameIdentity, TitleId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,6 +36,14 @@ pub struct RomMetadata {
     pub kind: RomImageKind,
     pub game: Option<GameIdentity>,
     pub decrypted: bool,
+}
+
+/// Identity information recoverable from native container metadata before a game
+/// profile is selected. `eo-rom` deliberately does not depend on `eo-profiles`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RomIdentityHint {
+    pub title_id: Option<TitleId>,
+    pub product_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,6 +75,7 @@ pub enum RomError {
 /// Read-only application boundary for a decrypted 3DS ROM source.
 pub trait RomReader {
     fn metadata(&self) -> Result<RomMetadata, RomError>;
+    fn identity_hint(&self) -> Result<RomIdentityHint, RomError>;
     fn entries(&self) -> Result<Vec<RomEntry>, RomError>;
     fn read_entry(&self, virtual_path: &str) -> Result<Vec<u8>, RomError>;
 }
