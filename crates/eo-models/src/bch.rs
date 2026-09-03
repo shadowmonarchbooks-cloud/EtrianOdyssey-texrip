@@ -23,6 +23,7 @@ struct BchHeader {
     commands_addr: u32,
     content_len: u32,
     strings_len: u32,
+    commands_len: u32,
 }
 
 impl ModelInspector for BchModelInspector {
@@ -210,6 +211,7 @@ fn parse_header(data: &[u8]) -> Result<BchHeader, ModelError> {
         commands_addr,
         content_len,
         strings_len,
+        commands_len,
     })
 }
 
@@ -390,21 +392,23 @@ fn command_block(
     raw_pointer: u32,
     word_count: u32,
 ) -> Option<BTreeMap<u16, u32>> {
-    if word_count == 0 || word_count > MAX_COMMAND_WORDS {
+    if word_count == 0 || word_count > MAX_COMMAND_WORDS || header.commands_len == 0 {
         return None;
     }
+    let commands_start = header.commands_addr as usize;
+    let commands_end = commands_start.checked_add(header.commands_len as usize)?;
     let byte_count = (word_count as usize).checked_mul(4)?;
     for start in [
-        (header.commands_addr as usize).checked_add(raw_pointer as usize),
+        commands_start.checked_add(raw_pointer as usize),
         Some(raw_pointer as usize),
     ]
     .into_iter()
     .flatten()
     {
-        if start
-            .checked_add(byte_count)
-            .is_none_or(|end| end > data.len())
-        {
+        let Some(end) = start.checked_add(byte_count) else {
+            continue;
+        };
+        if start < commands_start || end > commands_end || end > data.len() {
             continue;
         }
         let registers = parse_gpu_commands(data, start, word_count);
@@ -551,6 +555,18 @@ mod tests {
     fn disabled_texture_slot_is_preserved_as_disabled_metadata() {
         let mut data = synthetic_bch_model();
         put_u32(&mut data, 0x380, 0);
+        let inventory = BchModelInspector.inspect(&data).unwrap();
+        assert_eq!(inventory.materials[0].textures.len(), 1);
+        assert!(!inventory.materials[0].textures[0].enabled);
+    }
+
+    #[test]
+    fn command_pointer_outside_declared_section_is_not_followed() {
+        let mut data = synthetic_bch_model();
+        let material = 0x160usize;
+        put_u32(&mut data, material + 0x10, 0x100);
+        put_u32(&mut data, 0x100, 1);
+        put_u32(&mut data, 0x104, GPUREG_TEXUNIT_CONFIG as u32);
         let inventory = BchModelInspector.inspect(&data).unwrap();
         assert_eq!(inventory.materials[0].textures.len(), 1);
         assert!(!inventory.materials[0].textures[0].enabled);
