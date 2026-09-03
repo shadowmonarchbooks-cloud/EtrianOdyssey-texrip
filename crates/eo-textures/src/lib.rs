@@ -5,6 +5,7 @@
 //! Container-specific transforms (for example a format choosing to present an
 //! image vertically flipped) do not belong in this raw codec.
 
+pub mod cgfx;
 mod etc1;
 pub mod stex;
 pub mod swizzle;
