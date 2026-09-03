@@ -5,6 +5,7 @@
 //! never exposed as cleartext without an explicit future user-key path.
 
 pub mod bytes;
+pub mod native;
 pub mod ncch;
 pub mod ncsd;
 pub mod romfs;
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use bytes::{ByteRange, ByteReader};
+pub use native::NativeRom;
 pub use ncch::{NcchHeader, NcchImage, NcchRegion};
 pub use ncsd::{NcsdHeader, NcsdImage, NcsdPartition};
 pub use romfs::{RomFsEntry, RomFsImage, RomFsLayout};
