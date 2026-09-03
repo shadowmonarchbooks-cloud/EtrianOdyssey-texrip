@@ -82,10 +82,6 @@ The Python implementation remains a reference implementation only after this mil
 - [x] Centralize the code-facing application version.
 - [x] Prove the regression CI matrix on Windows/Linux and Python 3.10/3.12 before merging 0.13.
 
-### Repository administration follow-up
-
-- [ ] Require the proven regression CI on `main` through GitHub branch protection/rulesets. This is a repository-admin setting, not an application-code change. The connected GitHub actions used for this implementation can inspect protection/rulesets but do not expose a mutation for enabling them, so this remains an explicit repository setting to turn on outside this code PR.
-
 ## 0.13 implementation notes
 
 - Canonical application version: `0.13.0`.
@@ -94,6 +90,7 @@ The Python implementation remains a reference implementation only after this mil
 - Exact and perceptual runtime-hash evidence now have separate trust levels.
 - Copyright-safe structural fingerprints can be emitted with `python eouhd_cli.py fingerprint <workspace>` or `tools/fingerprint_workspace.py`.
 - Archive resource ceilings are configurable through `EO_TEXRIP_MAX_ARCHIVE_DEPTH`, `EO_TEXRIP_MAX_EXTRACTED_FILES`, `EO_TEXRIP_MAX_EXPANDED_BYTES`, `EO_TEXRIP_MAX_MEMBER_BYTES`, and `EO_TEXRIP_MAX_ARCHIVE_BYTES`.
+- Branch protection is intentionally not a 0.13 exit requirement; the legacy implementation is retained only as a comparison/reference baseline while active development moves to Rust.
 
 ## 0.13 rule
 
