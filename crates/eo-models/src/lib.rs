@@ -1,4 +1,12 @@
 //! Model and material inspection contracts for EO-TexRip.
+//!
+//! 0.50 begins the native implementations behind these contracts. Inspectors
+//! expose only structural texture bindings; semantic roles remain `Unknown`
+//! unless the container metadata proves a stronger classification.
+
+mod cgfx;
+
+pub use cgfx::CgfxModelInspector;
 
 use eo_core::TextureRole;
 use serde::{Deserialize, Serialize};
