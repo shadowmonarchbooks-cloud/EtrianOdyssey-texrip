@@ -102,6 +102,42 @@ Do not broaden format heuristics while freezing the reference implementation. Ev
 
 0.20 begins only after the 0.13 reference behavior is stable enough to compare against.
 
+## 0.20 exit criteria
+
+### Workspace and domain model
+
+- [x] Create the Cargo workspace at application version `0.20.0`.
+- [x] Define stable `GameId`, region, Title ID, runtime-hash and asset-ID types.
+- [x] Represent all seven EO-branded Nintendo 3DS targets explicitly.
+- [x] Keep Atlus EO and Mystery Dungeon as separate profile families.
+- [x] Separate visible texture dimensions from PICA200 8x8 storage dimensions.
+- [x] Represent all common PICA200 texture formats and encoded base-level sizing.
+- [x] Separate candidate, structural, runtime-verified and user-verified hash evidence.
+- [x] Validate project schema, duplicate asset IDs, game mismatches and conflicting verified hashes.
+
+### Rescan and user-state semantics
+
+- [x] Preserve user-friendly names, category overrides and tags across rescans.
+- [x] Preserve user-overridden classification across rescans.
+- [x] Never downgrade stronger runtime-hash evidence to a weaker candidate.
+- [ ] Add explicit project serialization/load-save helpers around the core manifest contract.
+
+### Stable subsystem boundaries
+
+- [x] Add profile-registry contracts without guessing unsupported game compatibility.
+- [x] Add ROM-reader interfaces without implementing NCSD/CIA/NCCH yet.
+- [x] Add bounded archive-parser interfaces and shared extraction-budget types.
+- [x] Add PICA texture-decoder interfaces and encoded/decoded payload validation.
+- [x] Add model/material structural inspection interfaces.
+- [x] Add Azahar pack-planning interfaces that only auto-map verified runtime hashes.
+
+### Quality gate
+
+- [x] Add Rust CI on Ubuntu and Windows.
+- [ ] Pass Clippy with warnings denied across the full workspace.
+- [ ] Pass the complete Rust workspace test suite on Ubuntu and Windows.
+- [ ] Document the behavioral comparison boundary between 0.13 Python fingerprints and future Rust extraction output.
+
 Initial workspace target:
 
 ```text
@@ -119,7 +155,7 @@ eo-texrip/
     └── desktop/
 ```
 
-Core domain types will include `GameId`, `GameRegion`, `GameProfile`, `AssetId`, `TextureAsset`, `TextureFormat`, `TextureRole`, `ArchiveSource`, `RuntimeHash`, and structured extraction errors.
+Core domain types include `GameId`, `GameRegion`, `GameProfile`, `AssetId`, `TextureAsset`, `TextureFormat`, `TextureRole`, source provenance, `RuntimeHash`, and structured subsystem errors.
 
 The long-term pipeline is:
 
@@ -138,3 +174,7 @@ ROM Reader
 ```
 
 Game profiles decide where to look. Parsers decide what data is. The texture engine decides how it is decoded. The catalog stores stable asset identity and user decisions. Azahar remains an output target rather than the internal data model.
+
+## 0.20 rule
+
+Do not port binary parsers into this milestone. 0.20 freezes application-facing contracts first so later format work can be compared to the 0.13 reference without repeatedly changing project identity or persistence semantics.
