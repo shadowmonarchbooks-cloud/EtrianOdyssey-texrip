@@ -238,21 +238,32 @@ pub fn parse_header(data: &[u8]) -> Result<BchHeader, BchError> {
     }
     let reloc_len = read_u32(data, cursor).ok_or(BchError::InvalidHeader)?;
 
-    for address in [content_addr, strings_addr, commands_addr, data_addr, reloc_addr] {
-        if address != 0 && address as usize >= data.len() {
+    if content_addr == 0 || content_len < 12 {
+        return Err(BchError::InvalidHeader);
+    }
+
+    for (address, length) in [
+        (content_addr, content_len),
+        (strings_addr, strings_len),
+        (commands_addr, commands_len),
+        (data_addr, data_len),
+        (data_ext_addr, data_ext_len),
+        (reloc_addr, reloc_len),
+    ] {
+        if address == 0 {
+            if length != 0 {
+                return Err(BchError::InvalidSection);
+            }
+            continue;
+        }
+        let start = address as usize;
+        if start >= data.len()
+            || start
+                .checked_add(length as usize)
+                .is_none_or(|end| end > data.len())
+        {
             return Err(BchError::InvalidSection);
         }
-    }
-    if data_ext_addr != 0 && data_ext_addr as usize >= data.len() {
-        return Err(BchError::InvalidSection);
-    }
-    if reloc_addr != 0
-        && reloc_len != 0
-        && (reloc_addr as usize)
-            .checked_add(reloc_len as usize)
-            .is_none_or(|end| end > data.len())
-    {
-        return Err(BchError::InvalidSection);
     }
 
     Ok(BchHeader {
