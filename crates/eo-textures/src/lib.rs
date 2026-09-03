@@ -5,6 +5,7 @@
 //! Container-specific transforms (for example a format choosing to present an
 //! image vertically flipped) do not belong in this raw codec.
 
+mod etc1;
 pub mod swizzle;
 mod uncompressed;
 
@@ -12,6 +13,7 @@ use eo_core::{TextureDimensions, TextureFormat};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use etc1::decode_etc1;
 pub use uncompressed::decode_uncompressed;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,6 +123,12 @@ impl EncodedTexture {
                 actual: self.payload.len() as u64,
             })
     }
+
+    /// Exact encoded level-0 bytes used by runtime-hash adapters. This deliberately
+    /// excludes later mip levels and any container alignment after level 0.
+    pub fn runtime_hash_payload(&self) -> Result<&[u8], TextureError> {
+        self.level_payload(0)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -174,16 +182,27 @@ pub trait TextureDecoder {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativePicaDecoder;
 
+impl NativePicaDecoder {
+    pub fn decode_level(
+        &self,
+        texture: &EncodedTexture,
+        level: u8,
+    ) -> Result<DecodedTexture, TextureError> {
+        let layout = texture.level_layout(level)?;
+        let payload = texture.level_payload(level)?;
+        match texture.format {
+            TextureFormat::Etc1 | TextureFormat::Etc1A4 => {
+                decode_etc1(layout.dimensions, texture.format, payload)
+            }
+            _ => decode_uncompressed(layout.dimensions, texture.format, payload),
+        }
+    }
+}
+
 impl TextureDecoder for NativePicaDecoder {
     fn decode_base_level(&self, texture: &EncodedTexture) -> Result<DecodedTexture, TextureError> {
         texture.validate_base_level()?;
-        let payload = texture.level_payload(0)?;
-        match texture.format {
-            TextureFormat::Etc1 | TextureFormat::Etc1A4 => {
-                Err(TextureError::UnsupportedFormat(texture.format))
-            }
-            _ => decode_uncompressed(texture.dimensions, texture.format, payload),
-        }
+        self.decode_level(texture, 0)
     }
 }
 
@@ -248,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_level_slice_excludes_following_mips_and_trailing_alignment() {
+    fn exact_level_and_runtime_hash_slices_exclude_trailing_data() {
         let dims = TextureDimensions::new(8, 8).unwrap();
         let mut payload = vec![0xCC; 300];
         payload[..256].fill(0x11);
@@ -261,6 +280,7 @@ mod tests {
         let level = texture.level_payload(0).unwrap();
         assert_eq!(level.len(), 256);
         assert!(level.iter().all(|byte| *byte == 0x11));
+        assert_eq!(texture.runtime_hash_payload().unwrap(), level);
     }
 
     #[test]
@@ -304,6 +324,25 @@ mod tests {
         };
         let decoded = NativePicaDecoder.decode_base_level(&texture).unwrap();
         assert_eq!(&decoded.rgba8[..4], &[0x11, 0x22, 0x33, 0x44]);
+    }
+
+    #[test]
+    fn native_decoder_handles_etc1_base_level() {
+        let dims = TextureDimensions::new(8, 8).unwrap();
+        let mut payload = vec![0u8; 32];
+        for block in payload.chunks_exact_mut(8) {
+            block[5] = 0x22;
+            block[6] = 0x44;
+            block[7] = 0x88;
+        }
+        let texture = EncodedTexture {
+            dimensions: dims,
+            format: TextureFormat::Etc1,
+            mip_count: 1,
+            payload,
+        };
+        let decoded = NativePicaDecoder.decode_base_level(&texture).unwrap();
+        assert_eq!(&decoded.rgba8[..4], &[0x8A, 0x46, 0x24, 0xFF]);
     }
 
     #[test]
