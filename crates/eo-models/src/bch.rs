@@ -21,15 +21,8 @@ struct BchHeader {
     content_addr: u32,
     strings_addr: u32,
     commands_addr: u32,
-    data_addr: u32,
-    data_ext_addr: u32,
-    reloc_addr: u32,
     content_len: u32,
     strings_len: u32,
-    commands_len: u32,
-    data_len: u32,
-    data_ext_len: u32,
-    reloc_len: u32,
 }
 
 impl ModelInspector for BchModelInspector {
@@ -82,7 +75,7 @@ fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
 
             let enabled = material_texture_enablement(data, &header, material_start);
             let mut textures = Vec::new();
-            for slot in 0..3usize {
+            for (slot, is_enabled) in enabled.into_iter().enumerate() {
                 let Some(field) = material_start
                     .checked_add(names_offset)
                     .and_then(|base| base.checked_add(slot * 4))
@@ -102,7 +95,7 @@ fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
                     slot: slot_u8,
                     internal_name: texture_name,
                     role: TextureRole::Unknown,
-                    enabled: enabled[slot],
+                    enabled: is_enabled,
                 });
             }
 
@@ -215,15 +208,8 @@ fn parse_header(data: &[u8]) -> Result<BchHeader, ModelError> {
         content_addr,
         strings_addr,
         commands_addr,
-        data_addr,
-        data_ext_addr,
-        reloc_addr,
         content_len,
         strings_len,
-        commands_len,
-        data_len,
-        data_ext_len,
-        reloc_len,
     })
 }
 
