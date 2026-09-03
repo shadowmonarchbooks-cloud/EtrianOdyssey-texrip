@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn content_unit_shift_changes_region_offsets() {
         let mut data = fixture(true);
-        data.resize(0x3000, 0);
+        data.resize(0x4000, 0);
         data[0x18E] = 2;
         data[0x1A0..0x1A4].copy_from_slice(&2u32.to_le_bytes());
         data[0x1A4..0x1A8].copy_from_slice(&1u32.to_le_bytes());
