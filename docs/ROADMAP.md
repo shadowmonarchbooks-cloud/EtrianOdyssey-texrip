@@ -45,33 +45,33 @@ The Python implementation remains a reference implementation only after this mil
 - [x] Fix BCH/PICA base-level storage sizing for dimensions not aligned to 8x8 tiles.
 - [x] Add non-8-aligned regression cases for ETC1, ETC1A4, RGBA8 and a 4-bit format.
 - [x] Preserve the existing EOU1/EO2U structural parser regression suite through the hardening changes.
-- [ ] Capture a regression/fingerprint format for local legal game validation without committing copyrighted files.
+- [x] Capture a regression/fingerprint format for local legal game validation without committing copyrighted files.
 
 ### Input and extraction safety
 
 - [x] Centralize archive/RomFS path containment.
 - [x] Reject POSIX absolute paths, Windows drive paths, traversal components, device names and ADS syntax.
 - [x] Reject truncated uncompressed HPB entries rather than silently slicing short data.
-- [ ] Add recursive extraction budgets: nesting depth, member count, expanded bytes and per-member allocation.
+- [x] Add recursive extraction budgets: nesting depth, member count, expanded bytes and per-member allocation.
 
 ### Workspace safety
 
-- [ ] Preserve edited/upscaled master files even when the previous manifest is missing or corrupt.
-- [ ] Read live `pack.json` mappings when locating intentionally renamed masters.
-- [ ] Stage and validate master/deployment refreshes before atomic promotion.
-- [ ] Keep a rollback target until a new project state has been promoted successfully.
-- [ ] Require an EO-TexRip workspace marker before destructive legacy cleanup.
+- [x] Preserve edited/upscaled master files even when the previous manifest is missing or corrupt.
+- [x] Read live `pack.json` mappings when locating intentionally renamed masters.
+- [x] Stage and validate master/deployment refreshes before atomic promotion.
+- [x] Keep a rollback target until a new project state has been promoted successfully.
+- [x] Require an EO-TexRip workspace marker before destructive legacy cleanup.
 
 ### Hash evidence
 
-- [ ] Exact RGBA/runtime evidence may become verified automatically.
-- [ ] Perceptual/downsample matches must remain candidates until explicitly confirmed.
+- [x] Exact RGBA/runtime evidence may become verified automatically.
+- [x] Perceptual/downsample matches must remain candidates until explicitly confirmed.
 
 ### Material workspace
 
-- [ ] Stop persistent material reports from pointing at temporary files deleted after success.
-- [ ] Make material-workspace reconstruction compatible with the streamlined layout or retire the incompatible API.
-- [ ] Label reconstructed material alpha as diagnostic when exact shader reconstruction is not possible.
+- [x] Stop persistent material reports from pointing at temporary files deleted after success.
+- [x] Make material-workspace reconstruction compatible with the streamlined layout or retire the incompatible API.
+- [x] Label reconstructed material alpha as diagnostic when exact shader reconstruction is not possible.
 
 ### Regression infrastructure
 
@@ -79,8 +79,17 @@ The Python implementation remains a reference implementation only after this mil
 - [x] Add Windows + Linux CI.
 - [x] Run Python compile checks and the full pytest suite in CI.
 - [x] Correct tests that inspect obsolete material-output paths.
-- [ ] Centralize the code-facing application version.
+- [x] Centralize the code-facing application version.
 - [ ] Protect `main` with required CI after the workflow has proven stable.
+
+## 0.13 implementation notes
+
+- Canonical application version: `0.13.0`.
+- Frozen parser provenance: `0.12.0` is retained separately as the legacy-reference version.
+- `azahar_pack_master` is treated as recoverable user state independently of the manifest.
+- Exact and perceptual runtime-hash evidence now have separate trust levels.
+- Copyright-safe structural fingerprints can be emitted with `python eouhd_cli.py fingerprint <workspace>` or `tools/fingerprint_workspace.py`.
+- Archive resource ceilings are configurable through `EO_TEXRIP_MAX_ARCHIVE_DEPTH`, `EO_TEXRIP_MAX_EXTRACTED_FILES`, `EO_TEXRIP_MAX_EXPANDED_BYTES`, `EO_TEXRIP_MAX_MEMBER_BYTES`, and `EO_TEXRIP_MAX_ARCHIVE_BYTES`.
 
 ## 0.13 rule
 
