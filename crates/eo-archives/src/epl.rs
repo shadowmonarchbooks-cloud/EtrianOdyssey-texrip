@@ -3,6 +3,7 @@ use crate::{
     enforce_archive_budget, enforce_inventory_budget, ArchiveError, ArchiveInventory, ArchiveKind,
     ArchiveMember, ArchiveParser, ExtractionBudget,
 };
+use encoding_rs::SHIFT_JIS;
 
 const EPL_HEADER_END: u64 = 0x8c;
 const EPL_RECORD_SIZE: u64 = 0xc0;
@@ -160,7 +161,8 @@ fn decode_cstring(raw: &[u8]) -> Option<String> {
     if end == 0 {
         return None;
     }
-    Some(String::from_utf8_lossy(&raw[..end]).into_owned())
+    let (decoded, _) = SHIFT_JIS.decode_without_bom_handling(&raw[..end]);
+    Some(decoded.into_owned())
 }
 
 #[cfg(test)]
@@ -201,6 +203,12 @@ mod tests {
                 .unwrap(),
             b"STEX"
         );
+    }
+
+    #[test]
+    fn epl_names_use_shift_jis_like_the_legacy_parser() {
+        let (encoded, _, _) = SHIFT_JIS.encode("テスト.stex");
+        assert_eq!(decode_cstring(&encoded).as_deref(), Some("テスト.stex"));
     }
 
     #[test]
