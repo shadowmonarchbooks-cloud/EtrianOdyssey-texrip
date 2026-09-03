@@ -7,6 +7,7 @@ authors.workspace = true
 description = "Model and material inspection contracts for EO-TexRip"
 
 [dependencies]
+encoding_rs.workspace = true
 eo-core = { path = "../eo-core" }
 serde.workspace = true
 thiserror.workspace = true
