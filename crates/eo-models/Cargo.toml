@@ -1,0 +1,12 @@
+[package]
+name = "eo-models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Model and material inspection contracts for EO-TexRip"
+
+[dependencies]
+eo-core = { path = "../eo-core" }
+serde.workspace = true
+thiserror.workspace = true
