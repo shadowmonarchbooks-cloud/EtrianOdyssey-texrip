@@ -1,11 +1,12 @@
 use crate::{
-    ByteReader, NcchHeader, NcchImage, NcsdImage, RomEntry, RomError, RomFsEntry, RomFsImage,
-    RomIdentityHint, RomImageKind, RomMetadata, RomReader,
+    ByteReader, CiaImage, NcchHeader, NcchImage, NcsdImage, RomEntry, RomError, RomFsEntry,
+    RomFsImage, RomIdentityHint, RomImageKind, RomMetadata, RomReader,
 };
 use eo_core::TitleId;
 
 pub enum NativeRom<'a> {
     Ncsd(NcsdImage<'a>),
+    Cia(CiaImage<'a>),
     Ncch(NcchImage<'a>),
     RomFs(RomFsImage<'a>),
 }
@@ -22,24 +23,20 @@ impl<'a> NativeRom<'a> {
         if reader.len() >= 4 && reader.bytes(0, 4)? == b"IVFC" {
             return Ok(Self::RomFs(RomFsImage::parse(data)?));
         }
+        if reader.len() >= 0x2020 {
+            let header_size = reader.u32_le(0)?;
+            if u64::from(header_size) >= 0x2020 && u64::from(header_size) <= reader.len() {
+                return Ok(Self::Cia(CiaImage::parse(data)?));
+            }
+        }
         Err(RomError::InvalidHeader)
     }
 
     pub fn romfs_entries(&self) -> Result<Vec<RomFsEntry>, RomError> {
         match self {
-            Self::Ncsd(image) => {
-                let ncch = primary_ncch(image)?;
-                let romfs = ncch
-                    .romfs_bytes()?
-                    .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
-                RomFsImage::parse(romfs)?.entries()
-            }
-            Self::Ncch(image) => {
-                let romfs = image
-                    .romfs_bytes()?
-                    .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
-                RomFsImage::parse(romfs)?.entries()
-            }
+            Self::Ncsd(image) => romfs_from_ncch(primary_ncch(image)?)?.entries(),
+            Self::Cia(image) => romfs_from_ncch(primary_cia_ncch(image)?)?.entries(),
+            Self::Ncch(image) => romfs_from_ncch_ref(image)?.entries(),
             Self::RomFs(image) => image.entries(),
         }
     }
@@ -48,6 +45,13 @@ impl<'a> NativeRom<'a> {
         match self {
             Self::Ncsd(image) => {
                 let ncch = primary_ncch(image)?;
+                let romfs_data = ncch
+                    .romfs_bytes()?
+                    .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
+                read_from_romfs(romfs_data, target)
+            }
+            Self::Cia(image) => {
+                let ncch = primary_cia_ncch(image)?;
                 let romfs_data = ncch
                     .romfs_bytes()?
                     .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
@@ -82,6 +86,11 @@ impl RomReader for NativeRom<'_> {
                     decrypted: ncch.header.no_crypto,
                 })
             }
+            Self::Cia(image) => Ok(RomMetadata {
+                kind: RomImageKind::Cia,
+                game: None,
+                decrypted: cia_is_cleartext(image),
+            }),
             Self::Ncch(image) => Ok(RomMetadata {
                 kind: image.header.image_kind(),
                 game: None,
@@ -98,6 +107,17 @@ impl RomReader for NativeRom<'_> {
     fn identity_hint(&self) -> Result<RomIdentityHint, RomError> {
         match self {
             Self::Ncsd(image) => identity_from_ncch(&primary_ncch(image)?.header),
+            Self::Cia(image) => {
+                let ncch_hint = image
+                    .main_content()
+                    .ok()
+                    .and_then(|content| NcchImage::parse(content).ok())
+                    .and_then(|ncch| identity_from_ncch(&ncch.header).ok());
+                Ok(RomIdentityHint {
+                    title_id: image.title_id.or_else(|| ncch_hint.as_ref()?.title_id),
+                    product_code: ncch_hint.and_then(|hint| hint.product_code),
+                })
+            }
             Self::Ncch(image) => identity_from_ncch(&image.header),
             Self::RomFs(_) => Ok(RomIdentityHint::default()),
         }
@@ -121,6 +141,39 @@ impl RomReader for NativeRom<'_> {
 
 fn primary_ncch<'a>(image: &NcsdImage<'a>) -> Result<NcchImage<'a>, RomError> {
     NcchImage::parse(image.partition_bytes(0)?)
+}
+
+fn primary_cia_ncch<'a>(image: &CiaImage<'a>) -> Result<NcchImage<'a>, RomError> {
+    NcchImage::parse(image.main_content()?)
+}
+
+fn romfs_from_ncch<'a>(ncch: NcchImage<'a>) -> Result<RomFsImage<'a>, RomError> {
+    let data = ncch
+        .romfs_bytes()?
+        .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
+    RomFsImage::parse(data)
+}
+
+fn romfs_from_ncch_ref<'a>(ncch: &NcchImage<'a>) -> Result<RomFsImage<'a>, RomError> {
+    let data = ncch
+        .romfs_bytes()?
+        .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
+    RomFsImage::parse(data)
+}
+
+fn cia_is_cleartext(image: &CiaImage<'_>) -> bool {
+    image
+        .contents
+        .iter()
+        .find(|content| content.index == 0 && content.included)
+        .is_some_and(|content| {
+            !content.encrypted
+                && image
+                    .main_content()
+                    .ok()
+                    .and_then(|bytes| NcchImage::parse(bytes).ok())
+                    .is_some_and(|ncch| ncch.header.no_crypto)
+        })
 }
 
 fn identity_from_ncch(header: &NcchHeader) -> Result<RomIdentityHint, RomError> {
@@ -157,12 +210,24 @@ mod tests {
 
     const NONE: u32 = 0xFFFF_FFFF;
 
+    fn put_u16_be(data: &mut [u8], offset: usize, value: u16) {
+        data[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+    }
+
     fn put_u32(data: &mut [u8], offset: usize, value: u32) {
         data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
+    fn put_u32_be(data: &mut [u8], offset: usize, value: u32) {
+        data[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    }
+
     fn put_u64(data: &mut [u8], offset: usize, value: u64) {
         data[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn put_u64_be(data: &mut [u8], offset: usize, value: u64) {
+        data[offset..offset + 8].copy_from_slice(&value.to_be_bytes());
     }
 
     fn put_utf16(data: &mut [u8], offset: usize, value: &str) -> u32 {
@@ -249,6 +314,31 @@ mod tests {
         data
     }
 
+    fn cia_fixture() -> Vec<u8> {
+        let ncch = ncch_fixture();
+        let header_size = 0x2020usize;
+        let tmd_size = 0xB34usize;
+        let tmd_offset = 0x2040usize;
+        let content_offset = 0x2B80usize;
+        let mut data = vec![0u8; content_offset + ncch.len()];
+        put_u32(&mut data, 0, header_size as u32);
+        put_u32(&mut data, 0x10, tmd_size as u32);
+        put_u64(&mut data, 0x18, ncch.len() as u64);
+        data[0x20] = 0x80;
+
+        put_u32_be(&mut data, tmd_offset, 0x0001_0004);
+        let sig_end = tmd_offset + 0x140;
+        put_u64_be(&mut data, sig_end + 0x4C, 0x0004_0000_000E_C700);
+        put_u16_be(&mut data, sig_end + 0x9E, 1);
+        let record = sig_end + 0x9C4;
+        put_u32_be(&mut data, record, 0x1234_5678);
+        put_u16_be(&mut data, record + 0x04, 0);
+        put_u16_be(&mut data, record + 0x06, 0);
+        put_u64_be(&mut data, record + 0x08, ncch.len() as u64);
+        data[content_offset..content_offset + ncch.len()].copy_from_slice(&ncch);
+        data
+    }
+
     #[test]
     fn rejects_unknown_container_without_guessing() {
         assert!(matches!(
@@ -279,6 +369,18 @@ mod tests {
         let entries = rom.entries().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].virtual_path, "data/test.bin");
+        assert_eq!(rom.read_entry("data/test.bin").unwrap(), b"EO3D");
+    }
+
+    #[test]
+    fn cleartext_cia_to_ncch_to_romfs_reads_file_without_external_tools() {
+        let data = cia_fixture();
+        let rom = NativeRom::detect(&data).unwrap();
+        assert_eq!(rom.metadata().unwrap().kind, RomImageKind::Cia);
+        assert!(rom.metadata().unwrap().decrypted);
+        let hint = rom.identity_hint().unwrap();
+        assert_eq!(hint.title_id.unwrap().to_string(), "00040000000EC700");
+        assert_eq!(hint.product_code.as_deref(), Some("CTR-P-BSK-USA"));
         assert_eq!(rom.read_entry("data/test.bin").unwrap(), b"EO3D");
     }
 }
