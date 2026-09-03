@@ -54,6 +54,64 @@ impl Default for ExtractionBudget {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtractionUsage {
+    pub max_depth_seen: u16,
+    pub members: u64,
+    pub expanded_bytes: u64,
+}
+
+impl ExtractionUsage {
+    /// Charge one inspected archive to the cumulative recursive-extraction budget.
+    /// Depth zero is the first archive; nested archives increment depth by one.
+    /// The update is transactional: a rejected inventory leaves usage unchanged.
+    pub fn charge_inventory(
+        &mut self,
+        depth: u16,
+        inventory: &ArchiveInventory,
+        budget: ExtractionBudget,
+    ) -> Result<(), ArchiveError> {
+        if depth > budget.max_depth {
+            return Err(ArchiveError::BudgetExceeded(format!(
+                "archive depth {depth} exceeds {}",
+                budget.max_depth
+            )));
+        }
+        let added_members = inventory.members.len() as u64;
+        let next_members = self
+            .members
+            .checked_add(added_members)
+            .ok_or_else(|| ArchiveError::BudgetExceeded("member count overflow".to_owned()))?;
+        if next_members > budget.max_members {
+            return Err(ArchiveError::BudgetExceeded(format!(
+                "cumulative member count {next_members} exceeds {}",
+                budget.max_members
+            )));
+        }
+
+        let added_expanded = inventory.members.iter().try_fold(0u64, |total, member| {
+            total
+                .checked_add(member.expanded_size.unwrap_or(member.stored_size))
+                .ok_or_else(|| ArchiveError::BudgetExceeded("expanded byte count overflow".to_owned()))
+        })?;
+        let next_expanded = self
+            .expanded_bytes
+            .checked_add(added_expanded)
+            .ok_or_else(|| ArchiveError::BudgetExceeded("expanded byte count overflow".to_owned()))?;
+        if next_expanded > budget.max_expanded_bytes {
+            return Err(ArchiveError::BudgetExceeded(format!(
+                "cumulative expanded bytes {next_expanded} exceed {}",
+                budget.max_expanded_bytes
+            )));
+        }
+
+        self.max_depth_seen = self.max_depth_seen.max(depth);
+        self.members = next_members;
+        self.expanded_bytes = next_expanded;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArchiveMember {
     pub index: u64,
@@ -154,6 +212,23 @@ pub(crate) fn enforce_inventory_budget(
 mod tests {
     use super::*;
 
+    fn inventory(expanded_sizes: &[u64]) -> ArchiveInventory {
+        ArchiveInventory {
+            kind: ArchiveKind::Farc,
+            members: expanded_sizes
+                .iter()
+                .enumerate()
+                .map(|(index, size)| ArchiveMember {
+                    index: index as u64,
+                    name: None,
+                    offset: 0,
+                    stored_size: *size,
+                    expanded_size: Some(*size),
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn default_budget_is_bounded() {
         let budget = ExtractionBudget::default();
@@ -164,22 +239,7 @@ mod tests {
 
     #[test]
     fn inventory_budget_counts_expanded_bytes_without_allocating_payloads() {
-        let members = vec![
-            ArchiveMember {
-                index: 0,
-                name: None,
-                offset: 0,
-                stored_size: 4,
-                expanded_size: Some(10),
-            },
-            ArchiveMember {
-                index: 1,
-                name: None,
-                offset: 4,
-                stored_size: 4,
-                expanded_size: Some(11),
-            },
-        ];
+        let members = inventory(&[10, 11]).members;
         let budget = ExtractionBudget {
             max_expanded_bytes: 20,
             ..ExtractionBudget::default()
@@ -200,5 +260,31 @@ mod tests {
             enforce_archive_budget(4, budget),
             Err(ArchiveError::BudgetExceeded(_))
         ));
+    }
+
+    #[test]
+    fn recursive_usage_is_cumulative_and_transactional() {
+        let budget = ExtractionBudget {
+            max_depth: 1,
+            max_members: 3,
+            max_expanded_bytes: 12,
+            ..ExtractionBudget::default()
+        };
+        let mut usage = ExtractionUsage::default();
+        usage.charge_inventory(0, &inventory(&[4, 4]), budget).unwrap();
+        assert_eq!(usage.members, 2);
+        assert_eq!(usage.expanded_bytes, 8);
+
+        let before = usage;
+        assert!(matches!(
+            usage.charge_inventory(1, &inventory(&[5]), budget),
+            Err(ArchiveError::BudgetExceeded(_))
+        ));
+        assert_eq!(usage, before);
+        assert!(matches!(
+            usage.charge_inventory(2, &inventory(&[]), budget),
+            Err(ArchiveError::BudgetExceeded(_))
+        ));
+        assert_eq!(usage, before);
     }
 }
