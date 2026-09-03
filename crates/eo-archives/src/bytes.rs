@@ -47,6 +47,10 @@ impl<'a> ByteReader<'a> {
             .map_err(|_| ArchiveError::InvalidOffset)
     }
 
+    pub(crate) fn u16_le(self, offset: u64) -> Result<u16, ArchiveError> {
+        Ok(u16::from_le_bytes(self.array(offset)?))
+    }
+
     pub(crate) fn u32_le(self, offset: u64) -> Result<u32, ArchiveError> {
         Ok(u32::from_le_bytes(self.array(offset)?))
     }
@@ -74,6 +78,7 @@ mod tests {
     fn little_endian_reads_are_checked() {
         let data = [0x78, 0x56, 0x34, 0x12];
         let reader = ByteReader::new(&data);
+        assert_eq!(reader.u16_le(0).unwrap(), 0x5678);
         assert_eq!(reader.u32_le(0).unwrap(), 0x1234_5678);
         assert_eq!(reader.i32_le(0).unwrap(), 0x1234_5678);
         assert_eq!(reader.u32_le(1), Err(ArchiveError::InvalidOffset));
