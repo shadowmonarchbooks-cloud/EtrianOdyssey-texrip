@@ -30,7 +30,11 @@ impl ArchiveParser for EplParser {
         let Ok(data_start) = reader.i32_le(0x88) else {
             return false;
         };
-        if file_count <= 0 || u64::try_from(file_count).ok().is_none_or(|count| count > MAX_STRUCTURAL_MEMBERS) {
+        if file_count <= 0
+            || u64::try_from(file_count)
+                .ok()
+                .is_none_or(|count| count > MAX_STRUCTURAL_MEMBERS)
+        {
             return false;
         }
         if data_start < EPL_HEADER_END as i32 {
@@ -212,8 +216,10 @@ mod tests {
     #[test]
     fn member_count_respects_budget_before_allocation() {
         let data = synthetic_epl();
-        let mut budget = ExtractionBudget::default();
-        budget.max_members = 0;
+        let budget = ExtractionBudget {
+            max_members: 0,
+            ..ExtractionBudget::default()
+        };
         assert!(matches!(
             EplParser.inspect(&data, budget),
             Err(ArchiveError::BudgetExceeded(_))
