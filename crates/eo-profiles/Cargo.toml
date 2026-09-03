@@ -1,0 +1,11 @@
+[package]
+name = "eo-profiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Game identity/profile registry for Nintendo 3DS Etrian Odyssey titles"
+
+[dependencies]
+eo-core = { path = "../eo-core" }
+serde.workspace = true
