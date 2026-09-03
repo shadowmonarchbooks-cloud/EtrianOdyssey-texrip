@@ -176,8 +176,10 @@ mod tests {
                 expanded_size: Some(11),
             },
         ];
-        let mut budget = ExtractionBudget::default();
-        budget.max_expanded_bytes = 20;
+        let budget = ExtractionBudget {
+            max_expanded_bytes: 20,
+            ..ExtractionBudget::default()
+        };
         assert!(matches!(
             enforce_inventory_budget(&members, budget),
             Err(ArchiveError::BudgetExceeded(_))
@@ -186,8 +188,10 @@ mod tests {
 
     #[test]
     fn archive_size_budget_is_checked_before_parser_work() {
-        let mut budget = ExtractionBudget::default();
-        budget.max_archive_bytes = 3;
+        let budget = ExtractionBudget {
+            max_archive_bytes: 3,
+            ..ExtractionBudget::default()
+        };
         assert!(matches!(
             enforce_archive_budget(4, budget),
             Err(ArchiveError::BudgetExceeded(_))
