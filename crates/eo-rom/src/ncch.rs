@@ -193,12 +193,13 @@ mod tests {
         data[0x18E] = 0;
         data[0x18F] = if no_crypto { 0x04 } else { 0 };
         data[0x1A0..0x1A4].copy_from_slice(&4u32.to_le_bytes());
-        data[0x1A4..0x1A8].copy_from_slice(&1u32.to_le_bytes());
-        data[0x1B0..0x1B4].copy_from_slice(&5u32.to_le_bytes());
+        data[0x1A4..0x1A8].copy_from_slice(&2u32.to_le_bytes());
+        data[0x1B0..0x1B4].copy_from_slice(&6u32.to_le_bytes());
         data[0x1B4..0x1B8].copy_from_slice(&2u32.to_le_bytes());
         data[0x800..0x805].copy_from_slice(b".code");
         data[0x80C..0x810].copy_from_slice(&4u32.to_le_bytes());
-        data[0xA00..0xA04].copy_from_slice(b"IVFC");
+        data[0xA00..0xA04].copy_from_slice(b"CODE");
+        data[0xC00..0xC04].copy_from_slice(b"IVFC");
         data
     }
 
@@ -211,8 +212,10 @@ mod tests {
         assert_eq!(image.header.product_code, "CTR-P-BSK-USA");
         assert_eq!(image.header.extended_header_size, 0x400);
         assert_eq!(image.header.exefs.as_ref().unwrap().offset, 0x800);
-        assert_eq!(image.header.romfs.as_ref().unwrap().offset, 0xA00);
-        assert_eq!(image.exefs().unwrap().unwrap().entries()[0].name, ".code");
+        assert_eq!(image.header.romfs.as_ref().unwrap().offset, 0xC00);
+        let exefs = image.exefs().unwrap().unwrap();
+        assert_eq!(exefs.entries()[0].name, ".code");
+        assert_eq!(exefs.read_entry(".code").unwrap(), b"CODE");
         assert_eq!(&image.romfs_bytes().unwrap().unwrap()[..4], b"IVFC");
     }
 
