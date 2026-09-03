@@ -2,9 +2,16 @@ import struct
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eouhd.bch_materials import parse_bch_materials, bindings_by_texture, extract_bch_texture_infos
+from eouhd.bch_materials import (
+    _texture_size,
+    parse_bch_materials,
+    bindings_by_texture,
+    extract_bch_texture_infos,
+)
 
 
 def _cmd(param: int, reg: int) -> bytes:
@@ -192,3 +199,19 @@ def test_local_bch_texture_descriptor_parser_handles_consecutive_commands():
     ]
     assert infos[0]['data_offset'] == 0x480
     assert infos[1]['data_offset'] == 0x4A0
+    assert infos[0]['data_size'] == 0x20
+    assert infos[1]['data_size'] == 0x20
+
+
+@pytest.mark.parametrize(
+    ('fmt', 'expected'),
+    [
+        (0x00, 1536),  # RGBA8: 16x24 storage at 32 bpp
+        (0x0A, 192),   # L4: 16x24 storage at 4 bpp
+        (0x0C, 192),   # ETC1: 16x24 storage at 4 bpp
+        (0x0D, 384),   # ETC1A4: 16x24 storage at 8 bpp
+    ],
+)
+def test_bch_texture_size_uses_pica_8x8_storage_padding(fmt: int, expected: int):
+    # 13x17 visible pixels occupy a 16x24 PICA tile-aligned base level.
+    assert _texture_size(13, 17, fmt) == expected
