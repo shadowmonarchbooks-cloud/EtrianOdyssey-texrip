@@ -4,9 +4,7 @@
 //! and verified runtime evidence are different: they must survive a rescan unless
 //! the user explicitly changes them.
 
-use eo_core::{
-    AssetId, EvidenceConfidence, RuntimeHash, RuntimeHashEvidence, TextureAsset, UserMetadata,
-};
+use eo_core::{AssetId, RuntimeHash, RuntimeHashEvidence, TextureAsset, UserMetadata};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -97,8 +95,8 @@ fn merge_hash_evidence(
 mod tests {
     use super::*;
     use eo_core::{
-        AssetClassification, GameId, SourceLocator, TextureDimensions, TextureFormat,
-        TextureRole,
+        AssetClassification, EvidenceConfidence, GameId, SourceLocator, TextureDimensions,
+        TextureFormat, TextureRole,
     };
     use std::collections::BTreeSet;
 
@@ -143,9 +141,15 @@ mod tests {
         rescanned.classification.category = "misc".to_owned();
         let merged = catalog.upsert_extracted(rescanned);
 
-        assert_eq!(merged.internal_name.as_deref(), Some("better_internal_name"));
+        assert_eq!(
+            merged.internal_name.as_deref(),
+            Some("better_internal_name")
+        );
         assert_eq!(merged.user.friendly_name.as_deref(), Some("my-monkey"));
-        assert_eq!(merged.user.category_override.as_deref(), Some("monsters/boss"));
+        assert_eq!(
+            merged.user.category_override.as_deref(),
+            Some("monsters/boss")
+        );
         assert!(merged.user.tags.contains("favorite"));
         assert_eq!(merged.classification.category, "monsters/boss");
         assert!(merged.classification.user_override);
@@ -154,14 +158,8 @@ mod tests {
     #[test]
     fn rescan_never_downgrades_verified_hash_to_candidate() {
         let mut catalog = AssetCatalog::new();
-        catalog.upsert_extracted(asset(
-            "tex:0001",
-            EvidenceConfidence::RuntimeVerified,
-        ));
-        let merged = catalog.upsert_extracted(asset(
-            "tex:0001",
-            EvidenceConfidence::Candidate,
-        ));
+        catalog.upsert_extracted(asset("tex:0001", EvidenceConfidence::RuntimeVerified));
+        let merged = catalog.upsert_extracted(asset("tex:0001", EvidenceConfidence::Candidate));
         assert_eq!(merged.runtime_hashes.len(), 1);
         assert_eq!(
             merged.runtime_hashes[0].confidence,
