@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.0 — Legacy Final
+
+- Froze the Python EOU/EO2U extractor as the behavioral reference for the independent Rust rewrite.
+- Corrected BCH/PICA base-level byte sizing to use 8×8 tile-aligned storage dimensions, including non-aligned RGBA8, L4, ETC1, and ETC1A4 regressions.
+- Added shared cross-platform archive/RomFS path containment for traversal, absolute/drive paths, Windows device names, ADS syntax, and unsafe path components.
+- Added a shared recursive extraction budget covering archive depth, extracted file count, expanded bytes, per-member size, and archive input size.
+- Rejects truncated HPI/HPB entries before writing/allocating incomplete payloads.
+- Made `azahar_pack_master` recoverable independently of the previous manifest; live `pack.json` mappings preserve intentional user renames.
+- Master/deployment rebuilds now stage, validate, retain rollback state during promotion, and only replace the previous known-good tree after validation.
+- Added an EO-TexRip workspace marker before destructive legacy cleanup; rerun reset no longer removes the previous deployment pack before the replacement succeeds.
+- Split runtime hash evidence by confidence: exact RGBA matches verify automatically, while perceptual/upscaled matches remain candidates until explicitly confirmed.
+- Retained material reports no longer point at transient files after streamlined cleanup. Reconstructed material alpha is explicitly labeled diagnostic rather than exact rendering.
+- Material-workspace rebuild can use the persistent master PNG when cleaned workspaces no longer contain the temporary `original` tree.
+- Added copyright-safe structural workspace fingerprints for comparing local legal ROM extractions without storing ROM bytes, decoded pixels, source paths, or texture/model names.
+- Added Windows/Linux Python 3.10/3.12 CI, compile checks, explicit test dependencies, and regression coverage for the hardening changes.
+- Centralized the application version at `0.13.0`; the frozen parser provenance remains separately identified as legacy reference `0.12.0`.
+
 ## 0.12.0
 
 - Replaced persistent canonical `tex1_*` PNG names with human-readable ROM-derived filenames mapped through Azahar `pack.json`.
