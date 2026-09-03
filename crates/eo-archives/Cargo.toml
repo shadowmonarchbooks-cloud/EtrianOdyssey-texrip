@@ -1,0 +1,11 @@
+[package]
+name = "eo-archives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Archive/container inspection contracts and extraction budgets for EO-TexRip"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

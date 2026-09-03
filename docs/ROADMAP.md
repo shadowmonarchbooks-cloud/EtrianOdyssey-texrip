@@ -82,10 +82,6 @@ The Python implementation remains a reference implementation only after this mil
 - [x] Centralize the code-facing application version.
 - [x] Prove the regression CI matrix on Windows/Linux and Python 3.10/3.12 before merging 0.13.
 
-### Repository administration follow-up
-
-- [ ] Require the proven regression CI on `main` through GitHub branch protection/rulesets. This is a repository-admin setting, not an application-code change. The connected GitHub actions used for this implementation can inspect protection/rulesets but do not expose a mutation for enabling them, so this remains an explicit repository setting to turn on outside this code PR.
-
 ## 0.13 implementation notes
 
 - Canonical application version: `0.13.0`.
@@ -94,6 +90,7 @@ The Python implementation remains a reference implementation only after this mil
 - Exact and perceptual runtime-hash evidence now have separate trust levels.
 - Copyright-safe structural fingerprints can be emitted with `python eouhd_cli.py fingerprint <workspace>` or `tools/fingerprint_workspace.py`.
 - Archive resource ceilings are configurable through `EO_TEXRIP_MAX_ARCHIVE_DEPTH`, `EO_TEXRIP_MAX_EXTRACTED_FILES`, `EO_TEXRIP_MAX_EXPANDED_BYTES`, `EO_TEXRIP_MAX_MEMBER_BYTES`, and `EO_TEXRIP_MAX_ARCHIVE_BYTES`.
+- Branch protection is intentionally not a 0.13 exit requirement; the legacy implementation is retained only as a comparison/reference baseline while active development moves to Rust.
 
 ## 0.13 rule
 
@@ -105,12 +102,49 @@ Do not broaden format heuristics while freezing the reference implementation. Ev
 
 0.20 begins only after the 0.13 reference behavior is stable enough to compare against.
 
-Initial workspace target:
+## 0.20 exit criteria
+
+### Workspace and domain model
+
+- [x] Create the Cargo workspace at application version `0.20.0`.
+- [x] Define stable `GameId`, region, Title ID, runtime-hash and asset-ID types.
+- [x] Represent all seven EO-branded Nintendo 3DS targets explicitly.
+- [x] Keep Atlus EO and Mystery Dungeon as separate profile families.
+- [x] Separate visible texture dimensions from PICA200 8x8 storage dimensions.
+- [x] Represent all common PICA200 texture formats and encoded base-level sizing.
+- [x] Separate candidate, structural, runtime-verified and user-verified hash evidence.
+- [x] Validate project schema, duplicate asset IDs, game mismatches and conflicting verified hashes.
+
+### Rescan and user-state semantics
+
+- [x] Preserve user-friendly names, category overrides and tags across rescans.
+- [x] Preserve user-overridden classification across rescans.
+- [x] Never downgrade stronger runtime-hash evidence to a weaker candidate.
+- [x] Add explicit project serialization/load-save helpers around the core manifest contract.
+
+### Stable subsystem boundaries
+
+- [x] Add profile-registry contracts without guessing unsupported game compatibility.
+- [x] Add ROM-reader interfaces without implementing NCSD/CIA/NCCH yet.
+- [x] Add bounded archive-parser interfaces and shared extraction-budget types.
+- [x] Add PICA texture-decoder interfaces and encoded/decoded payload validation.
+- [x] Add model/material structural inspection interfaces.
+- [x] Add Azahar pack-planning interfaces that only auto-map verified runtime hashes.
+
+### Quality gate
+
+- [x] Add Rust CI on Ubuntu and Windows.
+- [x] Pass Clippy with warnings denied across the full workspace.
+- [x] Pass the complete Rust workspace test suite on Ubuntu and Windows.
+- [x] Document the behavioral comparison boundary between 0.13 Python fingerprints and future Rust extraction output.
+
+Implemented workspace:
 
 ```text
 eo-texrip/
 ├── crates/
 │   ├── eo-core/
+│   ├── eo-project/
 │   ├── eo-rom/
 │   ├── eo-archives/
 │   ├── eo-textures/
@@ -119,10 +153,10 @@ eo-texrip/
 │   ├── eo-azahar/
 │   └── eo-profiles/
 └── app/
-    └── desktop/
+    └── desktop/        # later UI milestone
 ```
 
-Core domain types will include `GameId`, `GameRegion`, `GameProfile`, `AssetId`, `TextureAsset`, `TextureFormat`, `TextureRole`, `ArchiveSource`, `RuntimeHash`, and structured extraction errors.
+Core domain types include `GameId`, `GameRegion`, `GameProfile`, `AssetId`, `TextureAsset`, `TextureFormat`, `TextureRole`, source provenance, `RuntimeHash`, and structured subsystem errors.
 
 The long-term pipeline is:
 
@@ -141,3 +175,7 @@ ROM Reader
 ```
 
 Game profiles decide where to look. Parsers decide what data is. The texture engine decides how it is decoded. The catalog stores stable asset identity and user decisions. Azahar remains an output target rather than the internal data model.
+
+## 0.20 rule
+
+Do not port binary parsers into this milestone. 0.20 freezes application-facing contracts first so later format work can be compared to the 0.13 reference without repeatedly changing project identity or persistence semantics.

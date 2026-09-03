@@ -1,0 +1,56 @@
+name: Rust core CI
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - '.github/workflows/rust-ci.yml'
+  push:
+    branches:
+      - main
+      - 'milestone/**'
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - '.github/workflows/rust-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Rust quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: rustup show
+
+      - name: Normalize formatting
+        run: cargo fmt --all
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --all-targets
+
+  windows:
+    name: Rust Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: rustup show
+
+      - name: Test
+        run: cargo test --workspace --all-targets

@@ -1,0 +1,12 @@
+[package]
+name = "eo-project"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Validated project manifest serialization for EO-TexRip"
+
+[dependencies]
+eo-core = { path = "../eo-core" }
+serde_json.workspace = true
+thiserror.workspace = true

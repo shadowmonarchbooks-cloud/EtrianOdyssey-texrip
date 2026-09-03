@@ -1,0 +1,12 @@
+[package]
+name = "eo-rom"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "ROM access contracts for the independent EO-TexRip application"
+
+[dependencies]
+eo-core = { path = "../eo-core" }
+serde.workspace = true
+thiserror.workspace = true
