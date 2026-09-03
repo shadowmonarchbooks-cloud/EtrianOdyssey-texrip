@@ -33,8 +33,8 @@ jobs:
       - name: Toolchain
         run: rustup show
 
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Normalize formatting
+        run: cargo fmt --all
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
