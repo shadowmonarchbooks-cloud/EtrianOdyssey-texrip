@@ -1,0 +1,12 @@
+[package]
+name = "eo-azahar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Validated Azahar texture-pack planning for EO-TexRip"
+
+[dependencies]
+eo-core = { path = "../eo-core" }
+serde.workspace = true
+thiserror.workspace = true
