@@ -12,7 +12,7 @@ pub fn decode_uncompressed(
     }
 
     let expected = dimensions.encoded_base_size(format);
-    if payload.len() as u64 < expected {
+    if (payload.len() as u64) < expected {
         return Err(TextureError::TruncatedPayload {
             expected,
             actual: payload.len() as u64,
@@ -71,7 +71,8 @@ fn decode_pixel(
             Ok([data[2], data[1], data[0], 0xFF])
         }
         TextureFormat::Rgba5551 => {
-            let value = u16::from_le_bytes(pixel_bytes(payload, pixel_index, 2)?.try_into().unwrap());
+            let data = pixel_bytes(payload, pixel_index, 2)?;
+            let value = u16::from_le_bytes([data[0], data[1]]);
             let red = expand5(((value >> 11) & 0x1F) as u8);
             let green = expand5(((value >> 6) & 0x1F) as u8);
             let blue = expand5(((value >> 1) & 0x1F) as u8);
@@ -79,7 +80,8 @@ fn decode_pixel(
             Ok([red, green, blue, alpha])
         }
         TextureFormat::Rgb565 => {
-            let value = u16::from_le_bytes(pixel_bytes(payload, pixel_index, 2)?.try_into().unwrap());
+            let data = pixel_bytes(payload, pixel_index, 2)?;
+            let value = u16::from_le_bytes([data[0], data[1]]);
             Ok([
                 expand5(((value >> 11) & 0x1F) as u8),
                 expand6(((value >> 5) & 0x3F) as u8),
@@ -88,7 +90,8 @@ fn decode_pixel(
             ])
         }
         TextureFormat::Rgba4 => {
-            let value = u16::from_le_bytes(pixel_bytes(payload, pixel_index, 2)?.try_into().unwrap());
+            let data = pixel_bytes(payload, pixel_index, 2)?;
+            let value = u16::from_le_bytes([data[0], data[1]]);
             Ok([
                 expand4(((value >> 12) & 0x0F) as u8),
                 expand4(((value >> 8) & 0x0F) as u8),
