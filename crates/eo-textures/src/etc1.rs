@@ -7,6 +7,8 @@ const ETC_BLOCKS_PER_TILE: u64 = 4;
 const ETC_COLOR_BYTES: usize = 8;
 const ETC_ALPHA_BYTES: usize = 8;
 
+/// Maps sequential PICA/Morton pixels inside a 4x4 ETC block to ETC's
+/// column-major selector-bit index (`x * 4 + y`).
 const SELECTOR_ORDER: [u8; 16] = [0, 4, 1, 5, 8, 12, 9, 13, 2, 6, 3, 7, 10, 14, 11, 15];
 
 const MODIFIERS: [[i16; 4]; 8] = [
@@ -98,6 +100,8 @@ pub fn decode_etc1(
                     .map(|bits| expand4(((bits >> (u64::from(selector_index) * 4)) & 0xF) as u8))
                     .unwrap_or(0xFF);
 
+                // Morton indices 0..15, 16..31, 32..47 and 48..63 are the
+                // four 4x4 ETC quadrants of an 8x8 PICA tile.
                 let storage_index = tile_index
                     .checked_mul(TILE_PIXELS)
                     .and_then(|index| {
@@ -220,7 +224,7 @@ impl EtcColorBlock {
     }
 }
 
-const fn sign3(value: u8) -> i16 {
+fn sign3(value: u8) -> i16 {
     if value & 0x04 != 0 {
         i16::from(value) - 8
     } else {
@@ -270,9 +274,9 @@ mod tests {
     #[test]
     fn individual_mode_blocks_fill_8x8_quadrants_in_morton_group_order() {
         let dims = TextureDimensions::new(8, 8).unwrap();
-        let colors = [0x11u8, 0x33, 0x55, 0x77];
+        let red_nibbles = [1u8, 3, 5, 7];
         let mut payload = Vec::new();
-        for red in colors {
+        for red in red_nibbles {
             payload.extend_from_slice(&color_block(0, 0, 0, red * 0x11, 0, 0));
         }
         let image = decode_etc1(dims, TextureFormat::Etc1, &payload).unwrap();
@@ -310,7 +314,7 @@ mod tests {
         let valid = EtcColorBlock::parse(&color_block(0, 0, 0x02, 0xF8, 0x80, 0x08)).unwrap();
         assert_eq!(valid.decode(0).unwrap(), [0xFF, 0x86, 0x0A, 0xFF]);
 
-        let invalid = EtcColorBlock::parse(&color_block(0, 0, 0x02, 0xFC, 0x80, 0x08)).unwrap();
+        let invalid = EtcColorBlock::parse(&color_block(0, 0, 0x02, 0xFB, 0x80, 0x08)).unwrap();
         assert!(matches!(
             invalid.decode(0),
             Err(TextureError::InvalidData(_))
