@@ -298,7 +298,8 @@ mod tests {
     #[test]
     fn truncated_declared_cgfx_is_rejected() {
         let mut data = synthetic_cgfx();
-        put_u32(&mut data, 0x0c, data.len() as u32 + 1);
+        let declared_size = data.len() as u32 + 1;
+        put_u32(&mut data, 0x0c, declared_size);
         assert_eq!(CgfxModelInspector.inspect(&data), Err(ModelError::InvalidHeader));
     }
 
