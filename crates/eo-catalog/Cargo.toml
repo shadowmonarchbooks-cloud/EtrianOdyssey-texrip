@@ -1,0 +1,11 @@
+[package]
+name = "eo-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Asset catalog merge and rescan-preservation rules for EO-TexRip"
+
+[dependencies]
+eo-core = { path = "../eo-core" }
+thiserror.workspace = true
