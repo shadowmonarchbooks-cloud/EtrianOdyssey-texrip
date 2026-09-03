@@ -343,10 +343,13 @@ _TEXTURE_UNIT_REGS = (
 
 
 def _texture_size(width: int, height: int, fmt: int) -> int:
+    """Return the encoded PICA base-level size, including 8x8 tile padding."""
     bpp = _FORMAT_BPP.get(fmt, 0)
-    if not bpp:
+    if not bpp or width <= 0 or height <= 0:
         return 0
-    return (width * height * bpp + 7) // 8
+    storage_width = (width + 7) // 8 * 8
+    storage_height = (height + 7) // 8 * 8
+    return (storage_width * storage_height * bpp + 7) // 8
 
 
 def _texture_info_from_regs(regs: dict[int, int], unit: int) -> dict | None:

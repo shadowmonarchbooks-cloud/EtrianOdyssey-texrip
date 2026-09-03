@@ -9,8 +9,9 @@ from tkinter import ttk, filedialog, messagebox
 
 from .pipeline import run_full_pipeline
 from .workspace import import_runtime_dump, build_azahar_pack
+from .version import DISPLAY_VERSION
 
-APP_TITLE='Etrian Odyssey HD Texture Extractor 0.12'
+APP_TITLE=f'Etrian Odyssey HD Texture Extractor {DISPLAY_VERSION}'
 
 class App(tk.Tk):
     def __init__(self):
@@ -39,7 +40,7 @@ class App(tk.Tk):
     def _ui(self):
         root=ttk.Frame(self,padding=18); root.pack(fill='both',expand=True)
         ttk.Label(root,text='Etrian Odyssey HD Texture Extractor',style='Title.TLabel').pack(anchor='w')
-        ttk.Label(root,text='Streamlined EOU / EO2U texture upscaling workspace → Azahar.',style='Muted.TLabel').pack(anchor='w',pady=(2,14))
+        ttk.Label(root,text='0.13 legacy-reference hardening for EOU / EO2U → Azahar.',style='Muted.TLabel').pack(anchor='w',pady=(2,14))
         nb=ttk.Notebook(root); nb.pack(fill='both',expand=True)
         self.extract_tab=ttk.Frame(nb,padding=14); self.tools_tab=ttk.Frame(nb,padding=14); self.about_tab=ttk.Frame(nb,padding=14)
         nb.add(self.extract_tab,text='Extract'); nb.add(self.tools_tab,text='Workspace Tools'); nb.add(self.about_tab,text='Notes')
@@ -72,34 +73,27 @@ class App(tk.Tk):
         self._row(self.tools_tab,'Azahar dump/old pack',self.dump,'dir')
         b=ttk.Frame(self.tools_tab); b.pack(fill='x',pady=10)
         ttk.Button(b,text='Rebuild deployment pack',command=self.rebuild).pack(side='left')
-        ttk.Button(b,text='Import verified hashes',command=self.import_hashes).pack(side='left',padx=8)
+        ttk.Button(b,text='Import runtime hash evidence',command=self.import_hashes).pack(side='left',padx=8)
         self.tool_out=tk.Text(self.tools_tab,bg='#0d0f13',fg='#d8dee9',relief='flat',font=('Consolas',9),wrap='word'); self.tool_out.pack(fill='both',expand=True)
 
     def _about_ui(self):
-        txt = """What this 0.12 build does
+        txt = f"""What this {DISPLAY_VERSION} legacy-final build does
 
-• Supports Etrian Odyssey Untold: The Millennium Girl (EOU).
-• Adds Etrian Odyssey 2 Untold: The Fafnir Knight (EO2U).
-• Automatically identifies the game from the ROM Title ID / product code.
-• EOU keeps the verified ATBC → CGFX/BCMDL → CMDL/MTOB/TXOB 3D path.
-• EO2U uses the real HPI/HPB → ATBC/BAM2 → BCH/H3D path; FARC remains only an optional fallback.
-• Retains the conservative Atlus EPL resource-package stage so effect-contained STEX/CGFX/BCH/CTPK/CTXB members can enter the strict decoder.
-• 0.12 replaces hash-heavy PNG names with ROM-derived human-readable names and maps hashes through pack.json.
-• One physical PNG can serve multiple verified runtime hashes, reducing duplicate files further.
-• EO effect STEX files whose declared image byte count overshoots EOF are accepted when the complete base texture is present.
-• Deduplicates textures before creating the persistent workspace.
-• Keeps only two large persistent trees: azahar_pack_master and azahar_pack.
-• azahar_pack_master is the editable/upscaling source of truth; azahar_pack is the deployment copy.
-• Temporary extraction/model/material trees are deleted after a successful run.
-• Lightweight manifests/reports remain under .eouhd; only small failure/investigation samples (max 6 / 32 MiB) are retained under .eouhd/diagnostics when needed.
+• Keeps the verified EOU and EO2U extraction paths as the behavioral reference for the independent rewrite.
+• Corrects BCH/PICA 8×8 storage sizing for non-aligned texture dimensions.
+• Adds cross-platform archive path containment and shared depth/file/expanded-byte/member-size budgets.
+• Makes azahar_pack_master recoverable even if the previous manifest is missing or corrupt.
+• Preserves intentional pack.json renames and promotes master/deployment packs transactionally.
+• Keeps exact runtime-hash matches verified while perceptual/upscaled matches remain candidates until confirmed.
+• Labels reconstructed material alpha as diagnostic and removes dead transient paths from retained reports.
+• Produces copyright-safe structural fingerprints for comparing future implementations.
 
-Rerun safety
+Supported reference games
 
-0.12 records the extracted baseline for every unique texture. Resized, upscaled, or retouched master PNGs are preserved on later extractions.
+• Etrian Odyssey Untold: The Millennium Girl (EOU).
+• Etrian Odyssey 2 Untold: The Fafnir Knight (EO2U).
 
-Hash behavior
-
-0.12 continues to use Azahar's CityHash64 use_new_hash=true path. PNGs use human-readable basenames; pack.json maps each runtime hash to the correct file. Category folders remain safe because Azahar scans recursively. If you manually rename a PNG, update pack.json too.
+The 0.13 Python application is being frozen as the reference implementation. Broader game support and removal of the Texture Forge/Python dependency belong to the independent Rust milestones that follow.
 
 This program does not contain game assets, keys, ROMs, or Nintendo/Atlus code. Use a decrypted dump you created from your own copy."""
         t=tk.Text(self.about_tab,bg='#171a20',fg='#d8dee9',relief='flat',wrap='word',font=('Segoe UI',10))

@@ -5,6 +5,8 @@ from pathlib import Path
 import struct
 from typing import Iterable
 
+from .safety import UnsafeArchivePath, safe_archive_join
+
 
 class HPXError(RuntimeError):
     pass
@@ -179,7 +181,13 @@ def unpack_hpi_pair(index_path: str | Path, output_dir: str | Path) -> list[Path
             continue
         # For uncompressed entries the index size is the direct payload size.
         if e.decompressed_size == 0:
-            payload = hpb[e.file_offset:e.file_offset + e.compressed_size]
+            end = e.file_offset + e.compressed_size
+            if end > len(hpb):
+                raise HPXError(
+                    f'Uncompressed HPB entry {e.filename!r} exceeds archive bounds: '
+                    f'0x{e.file_offset:X}+0x{e.compressed_size:X} > 0x{len(hpb):X}'
+                )
+            payload = hpb[e.file_offset:end]
         else:
             # The reverse-LZ header tells us how much payload is present. Include
             # enough of the HPB tail for the declared block and let the decoder validate.
@@ -189,13 +197,20 @@ def unpack_hpi_pair(index_path: str | Path, output_dir: str | Path) -> list[Path
             block_comp_size = _u32(tail, 0x04)
             header_size = _u32(tail, 0x08)
             total = header_size + block_comp_size
+            if header_size < 0x20 or total > len(tail):
+                raise HPXError(
+                    f'Compressed HPB entry {e.filename!r} exceeds archive bounds: '
+                    f'header=0x{header_size:X}, compressed=0x{block_comp_size:X}, '
+                    f'available=0x{len(tail):X}'
+                )
             payload = _decompress_acmp_block(tail[:total])
 
-        # Archive filenames may use either slash style. Prevent traversal.
-        rel = Path(e.filename.replace('\\', '/').lstrip('/'))
-        if '..' in rel.parts:
-            rel = Path(f'unsafe_{e.index:05d}_{rel.name}')
-        dest = out_root / rel
+        # Archive filenames may use either slash style. Unsafe members are ignored
+        # rather than rewritten, so an archive can never redirect output elsewhere.
+        try:
+            dest = safe_archive_join(out_root, e.filename)
+        except UnsafeArchivePath:
+            continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(payload)
         written.append(dest)

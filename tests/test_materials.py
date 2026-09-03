@@ -104,7 +104,8 @@ def test_only_material_referenced_alpha_is_exported():
         with Image.open(alpha_path) as im:
             assert np.array_equal(np.asarray(im), red)
         # The unrelated opaque grayscale texture must not produce any alpha file.
-        all_names = [p.name for p in (root / '10_3d_materials').rglob('*.png')]
+        material_root = root / '.eouhd' / 'work' / '10_3d_materials'
+        all_names = [p.name for p in material_root.rglob('*.png')]
         assert not any('mis_GRAY' in name for name in all_names)
 
 
@@ -123,7 +124,8 @@ def test_no_material_bindings_means_no_generated_alpha():
         report = build_3d_material_workspace(root, assets)
         assert report['materials_found'] == 0
         assert report['explicit_texture_alpha_channels'] == 0
-        assert list((root / '10_3d_materials').rglob('*.png')) == []
+        material_root = root / '.eouhd' / 'work' / '10_3d_materials'
+        assert list(material_root.rglob('*.png')) == []
 
 
 def test_etc1_alpha_operand_is_recorded_as_constant_not_fake_alpha_png():
@@ -154,5 +156,5 @@ def test_etc1_alpha_operand_is_recorded_as_constant_not_fake_alpha_png():
         material = report['materials'][0]
         assert material['alpha_texture_channels'] == []
         assert material['constant_texture_alpha_inputs'][0]['constant_value'] == 255
-        folder = (root / '10_3d_materials')
+        folder = root / '.eouhd' / 'work' / '10_3d_materials'
         assert not list(folder.rglob('alpha_stage*.png'))
