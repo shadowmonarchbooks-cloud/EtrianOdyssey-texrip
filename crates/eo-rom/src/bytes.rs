@@ -80,6 +80,18 @@ impl<'a> ByteReader<'a> {
     pub fn u64_le(self, offset: u64) -> Result<u64, RomError> {
         Ok(u64::from_le_bytes(self.array(offset)?))
     }
+
+    pub fn u16_be(self, offset: u64) -> Result<u16, RomError> {
+        Ok(u16::from_be_bytes(self.array(offset)?))
+    }
+
+    pub fn u32_be(self, offset: u64) -> Result<u32, RomError> {
+        Ok(u32::from_be_bytes(self.array(offset)?))
+    }
+
+    pub fn u64_be(self, offset: u64) -> Result<u64, RomError> {
+        Ok(u64::from_be_bytes(self.array(offset)?))
+    }
 }
 
 #[cfg(test)]
@@ -108,10 +120,12 @@ mod tests {
     }
 
     #[test]
-    fn integer_reads_are_little_endian() {
+    fn integer_reads_support_both_endiannesses() {
         let data = [0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0, 0];
         let reader = ByteReader::new(&data);
         assert_eq!(reader.u16_le(0).unwrap(), 0x1234);
         assert_eq!(reader.u32_le(2).unwrap(), 0x12345678);
+        assert_eq!(reader.u16_be(0).unwrap(), 0x3412);
+        assert_eq!(reader.u32_be(2).unwrap(), 0x78563412);
     }
 }
