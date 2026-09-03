@@ -1,5 +1,5 @@
 use crate::bytes::{ByteRange, ByteReader};
-use crate::{RomError, RomImageKind};
+use crate::{ExeFsImage, RomError, RomImageKind};
 use serde::{Deserialize, Serialize};
 
 const NCCH_HEADER_SIZE: u64 = 0x200;
@@ -153,6 +153,10 @@ impl<'a> NcchImage<'a> {
         self.cleartext_region(self.header.exefs.as_ref())
     }
 
+    pub fn exefs(&self) -> Result<Option<ExeFsImage<'a>>, RomError> {
+        self.exefs_bytes()?.map(ExeFsImage::parse).transpose()
+    }
+
     pub fn romfs_bytes(&self) -> Result<Option<&'a [u8]>, RomError> {
         if self.header.no_mount_romfs {
             return Ok(None);
@@ -192,7 +196,8 @@ mod tests {
         data[0x1A4..0x1A8].copy_from_slice(&1u32.to_le_bytes());
         data[0x1B0..0x1B4].copy_from_slice(&5u32.to_le_bytes());
         data[0x1B4..0x1B8].copy_from_slice(&2u32.to_le_bytes());
-        data[0x800..0x804].copy_from_slice(b"EXFS");
+        data[0x800..0x805].copy_from_slice(b".code");
+        data[0x80C..0x810].copy_from_slice(&4u32.to_le_bytes());
         data[0xA00..0xA04].copy_from_slice(b"IVFC");
         data
     }
@@ -207,7 +212,7 @@ mod tests {
         assert_eq!(image.header.extended_header_size, 0x400);
         assert_eq!(image.header.exefs.as_ref().unwrap().offset, 0x800);
         assert_eq!(image.header.romfs.as_ref().unwrap().offset, 0xA00);
-        assert_eq!(&image.exefs_bytes().unwrap().unwrap()[..4], b"EXFS");
+        assert_eq!(image.exefs().unwrap().unwrap().entries()[0].name, ".code");
         assert_eq!(&image.romfs_bytes().unwrap().unwrap()[..4], b"IVFC");
     }
 
@@ -216,6 +221,7 @@ mod tests {
         let data = fixture(false);
         let image = NcchImage::parse(&data).unwrap();
         assert_eq!(image.romfs_bytes(), Err(RomError::EncryptedInput));
+        assert!(matches!(image.exefs(), Err(RomError::EncryptedInput)));
     }
 
     #[test]
