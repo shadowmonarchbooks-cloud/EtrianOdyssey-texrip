@@ -4,11 +4,21 @@ members = [
     "crates/eo-core",
     "crates/eo-profiles",
     "crates/eo-catalog",
+    "crates/eo-rom",
+    "crates/eo-archives",
+    "crates/eo-textures",
+    "crates/eo-models",
+    "crates/eo-azahar",
 ]
 default-members = [
     "crates/eo-core",
     "crates/eo-profiles",
     "crates/eo-catalog",
+    "crates/eo-rom",
+    "crates/eo-archives",
+    "crates/eo-textures",
+    "crates/eo-models",
+    "crates/eo-azahar",
 ]
 
 [workspace.package]
