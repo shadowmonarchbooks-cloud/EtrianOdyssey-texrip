@@ -7,12 +7,14 @@
 mod bytes;
 pub mod epl;
 pub mod farc;
+pub mod hpi_hpb;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use epl::EplParser;
 pub use farc::FarcParser;
+pub use hpi_hpb::HpiHpbParser;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
