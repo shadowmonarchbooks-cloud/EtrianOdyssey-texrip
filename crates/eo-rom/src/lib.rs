@@ -1,11 +1,28 @@
-//! Format-agnostic ROM access contracts.
+//! Native, read-only Nintendo 3DS ROM access for EO-TexRip.
 //!
-//! 0.20 intentionally defines no NCSD/CIA/NCCH/RomFS parser. Later milestones
-//! implement these contracts without changing the application-facing model.
+//! 0.30 replaces the external ROM-reader dependency incrementally. Every parser
+//! is bounds-checked and may inspect encrypted metadata, but encrypted content is
+//! never exposed as cleartext without an explicit future user-key path.
 
-use eo_core::GameIdentity;
+pub mod bytes;
+pub mod cia;
+pub mod exefs;
+pub mod native;
+pub mod ncch;
+pub mod ncsd;
+pub mod romfs;
+
+use eo_core::{GameIdentity, TitleId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use bytes::{ByteRange, ByteReader};
+pub use cia::{CiaContent, CiaHeader, CiaImage, CiaSection};
+pub use exefs::{ExeFsEntry, ExeFsImage};
+pub use native::NativeRom;
+pub use ncch::{NcchHeader, NcchImage, NcchRegion};
+pub use ncsd::{NcsdHeader, NcsdImage, NcsdPartition};
+pub use romfs::{RomFsEntry, RomFsImage, RomFsLayout};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +42,14 @@ pub struct RomMetadata {
     pub decrypted: bool,
 }
 
+/// Identity information recoverable from native container metadata before a game
+/// profile is selected. `eo-rom` deliberately does not depend on `eo-profiles`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RomIdentityHint {
+    pub title_id: Option<TitleId>,
+    pub product_code: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RomEntry {
     pub virtual_path: String,
@@ -35,6 +60,8 @@ pub struct RomEntry {
 pub enum RomError {
     #[error("invalid or unsupported ROM header")]
     InvalidHeader,
+    #[error("malformed ROM structure: {0}")]
+    Malformed(String),
     #[error("encrypted ROM input requires user-supplied keys")]
     EncryptedInput,
     #[error("ROM offset or size is outside the source image")]
@@ -52,6 +79,7 @@ pub enum RomError {
 /// Read-only application boundary for a decrypted 3DS ROM source.
 pub trait RomReader {
     fn metadata(&self) -> Result<RomMetadata, RomError>;
+    fn identity_hint(&self) -> Result<RomIdentityHint, RomError>;
     fn entries(&self) -> Result<Vec<RomEntry>, RomError>;
     fn read_entry(&self, virtual_path: &str) -> Result<Vec<u8>, RomError>;
 }

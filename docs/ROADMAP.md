@@ -179,3 +179,87 @@ Game profiles decide where to look. Parsers decide what data is. The texture eng
 ## 0.20 rule
 
 Do not port binary parsers into this milestone. 0.20 freezes application-facing contracts first so later format work can be compared to the 0.13 reference without repeatedly changing project identity or persistence semantics.
+
+---
+
+# 0.30 — Native ROM
+
+0.30 replaces the independent Rust application's external ROM-reader path with native, read-only Nintendo 3DS container inspection. The frozen Python 0.13 reference remains untouched while later Rust milestones reach extraction parity.
+
+## 0.30 exit criteria
+
+### Checked binary access
+
+- [x] Add overflow-safe byte ranges and checked slicing before any binary region is exposed.
+- [x] Support little-endian and big-endian primitive reads required by native 3DS container metadata.
+- [x] Reject partitions, sections and file extents that exceed the actual source image.
+
+### NCSD / CCI
+
+- [x] Parse the NCSD header and eight-slot partition table using fixed 0x200 media units.
+- [x] Expose partition bytes through validated ranges.
+- [x] Permit correctly trimmed cartridge images whose nominal media capacity exceeds EOF while still validating every populated partition.
+
+### NCCH / CXI
+
+- [x] Parse NCCH/CXI identity, product code, media-unit shift and declared content size.
+- [x] Parse Extended Header, Plain, Logo, ExeFS and RomFS regions with checked extents.
+- [x] Distinguish CXI/executable content from non-executable NCCH content.
+- [x] Detect the NCCH no-crypto and no-mount-RomFS flags.
+- [x] Refuse encrypted ExeFS/RomFS bytes as cleartext.
+
+### ExeFS
+
+- [x] Parse the 0x200-byte ExeFS file table.
+- [x] Validate entry extents and reject duplicate, overlapping or unsafe entries.
+- [x] Expose structured ExeFS inspection through a cleartext NCCH/CXI.
+
+### RomFS / IVFC
+
+- [x] Parse IVFC/RomFS Level-3 layout without assuming a fixed Level-3 offset.
+- [x] Traverse UTF-16 directory and file metadata.
+- [x] Reject malformed metadata cycles and excessive node traversal.
+- [x] Reject unsafe path components and malformed names.
+- [x] Validate every file extent against the Level-3 filesystem region before exposing bytes.
+
+### CIA / TMD
+
+- [x] Parse the little-endian CIA archive header and aligned section layout.
+- [x] Parse big-endian TMD signature/header/content records.
+- [x] Read the CIA content-index bitmap and TMD encryption flags.
+- [x] Derive included-content offsets from declared/TMD sizes with bounds checks.
+- [x] Accept standard 64-byte content alignment and makerom-style 16-byte content packing only when the declared layout proves it.
+- [x] Expose a clear main NCCH content and reject encrypted main content as `EncryptedInput`.
+- [x] Recover the TMD Title ID even when main CIA content is encrypted.
+
+### Native reader and profile handoff
+
+- [x] Detect NCSD, CIA, NCCH/CXI and extracted IVFC/RomFS structurally rather than by file extension.
+- [x] Add a native `RomIdentityHint` carrying Title ID and product code without coupling `eo-rom` to `eo-profiles`.
+- [x] Support cleartext NCSD -> NCCH -> RomFS file enumeration/read.
+- [x] Support cleartext CIA -> NCCH -> RomFS file enumeration/read.
+- [x] Support direct NCCH/CXI and direct extracted RomFS inputs.
+- [x] Keep unsupported/unknown data explicit instead of guessing a container or game profile.
+
+### Security, legal boundary and regression coverage
+
+- [x] Commit synthetic binary fixtures only; do not add copyrighted game/ROM content.
+- [x] Do not bundle Nintendo keys, title keys, firmware or proprietary assets.
+- [x] Keep user-supplied-key decryption as an explicit future optional layer rather than a hidden parser behavior.
+- [x] Document supported native inputs and the encryption boundary in `docs/NATIVE_ROM.md`.
+- [x] Pass Rust formatting/Clippy/tests on Ubuntu and Windows.
+- [x] Keep the frozen Python regression matrix green while the native Rust ROM layer is introduced.
+
+## 0.30 implementation notes
+
+- Canonical Rust workspace version: `0.30.0`.
+- `eo-rom` owns native NCSD/CCI, NCCH/CXI, ExeFS, IVFC/RomFS and CIA/TMD structural inspection.
+- Container headers may be inspectable when payload content is encrypted; encrypted payload bytes are never silently interpreted as plaintext.
+- CIA parsing supports the standard 64-byte section alignment and detects legacy makerom-style 16-byte content packing from structural size evidence.
+- Title ID/product-code extraction is kept separate from game-profile policy. `eo-profiles` remains the authority on which identities are verified enough to auto-detect.
+- Synthetic end-to-end fixtures exercise NCSD -> NCCH -> RomFS and CIA -> NCCH -> RomFS without external tools.
+- Native ROM support removes the external ROM-reader requirement for the Rust application architecture; it does not delete the frozen Python reference implementation.
+
+## 0.30 rule
+
+The ROM layer is read-only and structural. Never guess encrypted bytes, container types, or game compatibility. Any future decryption support must be a separate explicit provider using keys supplied by the user; EO-TexRip must not ship or acquire Nintendo keys automatically.
