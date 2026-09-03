@@ -120,7 +120,7 @@ Do not broaden format heuristics while freezing the reference implementation. Ev
 - [x] Preserve user-friendly names, category overrides and tags across rescans.
 - [x] Preserve user-overridden classification across rescans.
 - [x] Never downgrade stronger runtime-hash evidence to a weaker candidate.
-- [ ] Add explicit project serialization/load-save helpers around the core manifest contract.
+- [x] Add explicit project serialization/load-save helpers around the core manifest contract.
 
 ### Stable subsystem boundaries
 
@@ -134,16 +134,17 @@ Do not broaden format heuristics while freezing the reference implementation. Ev
 ### Quality gate
 
 - [x] Add Rust CI on Ubuntu and Windows.
-- [ ] Pass Clippy with warnings denied across the full workspace.
-- [ ] Pass the complete Rust workspace test suite on Ubuntu and Windows.
-- [ ] Document the behavioral comparison boundary between 0.13 Python fingerprints and future Rust extraction output.
+- [x] Pass Clippy with warnings denied across the full workspace.
+- [x] Pass the complete Rust workspace test suite on Ubuntu and Windows.
+- [x] Document the behavioral comparison boundary between 0.13 Python fingerprints and future Rust extraction output.
 
-Initial workspace target:
+Implemented workspace:
 
 ```text
 eo-texrip/
 ├── crates/
 │   ├── eo-core/
+│   ├── eo-project/
 │   ├── eo-rom/
 │   ├── eo-archives/
 │   ├── eo-textures/
@@ -152,7 +153,7 @@ eo-texrip/
 │   ├── eo-azahar/
 │   └── eo-profiles/
 └── app/
-    └── desktop/
+    └── desktop/        # later UI milestone
 ```
 
 Core domain types include `GameId`, `GameRegion`, `GameProfile`, `AssetId`, `TextureAsset`, `TextureFormat`, `TextureRole`, source provenance, `RuntimeHash`, and structured subsystem errors.
