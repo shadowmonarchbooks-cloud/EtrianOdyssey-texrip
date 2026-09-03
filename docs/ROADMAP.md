@@ -42,9 +42,9 @@ The Python implementation remains a reference implementation only after this mil
 
 ### Correctness
 
-- [ ] Fix BCH/PICA base-level storage sizing for dimensions not aligned to 8x8 tiles.
-- [ ] Add non-8-aligned regression cases for ETC1, ETC1A4, RGBA8 and a 4-bit format.
-- [ ] Preserve known-good EOU1/EO2U structural parsing behavior.
+- [x] Fix BCH/PICA base-level storage sizing for dimensions not aligned to 8x8 tiles.
+- [x] Add non-8-aligned regression cases for ETC1, ETC1A4, RGBA8 and a 4-bit format.
+- [x] Preserve the existing EOU1/EO2U structural parser regression suite through the hardening changes.
 - [ ] Capture a regression/fingerprint format for local legal game validation without committing copyrighted files.
 
 ### Input and extraction safety
@@ -78,7 +78,7 @@ The Python implementation remains a reference implementation only after this mil
 - [x] Add an explicit development/test dependency set.
 - [x] Add Windows + Linux CI.
 - [x] Run Python compile checks and the full pytest suite in CI.
-- [ ] Correct tests that inspect obsolete material-output paths.
+- [x] Correct tests that inspect obsolete material-output paths.
 - [ ] Centralize the code-facing application version.
 - [ ] Protect `main` with required CI after the workflow has proven stable.
 
