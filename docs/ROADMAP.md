@@ -80,7 +80,11 @@ The Python implementation remains a reference implementation only after this mil
 - [x] Run Python compile checks and the full pytest suite in CI.
 - [x] Correct tests that inspect obsolete material-output paths.
 - [x] Centralize the code-facing application version.
-- [ ] Protect `main` with required CI after the workflow has proven stable.
+- [x] Prove the regression CI matrix on Windows/Linux and Python 3.10/3.12 before merging 0.13.
+
+### Repository administration follow-up
+
+- [ ] Require the proven regression CI on `main` through GitHub branch protection/rulesets. This is a repository-admin setting, not an application-code change. The connected GitHub actions used for this implementation can inspect protection/rulesets but do not expose a mutation for enabling them, so this remains an explicit repository setting to turn on outside this code PR.
 
 ## 0.13 implementation notes
 
