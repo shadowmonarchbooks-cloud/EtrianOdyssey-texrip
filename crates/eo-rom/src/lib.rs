@@ -7,6 +7,7 @@
 pub mod bytes;
 pub mod ncch;
 pub mod ncsd;
+pub mod romfs;
 
 use eo_core::GameIdentity;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ use thiserror::Error;
 pub use bytes::{ByteRange, ByteReader};
 pub use ncch::{NcchHeader, NcchImage, NcchRegion};
 pub use ncsd::{NcsdHeader, NcsdImage, NcsdPartition};
+pub use romfs::{RomFsEntry, RomFsImage, RomFsLayout};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +46,8 @@ pub struct RomEntry {
 pub enum RomError {
     #[error("invalid or unsupported ROM header")]
     InvalidHeader,
+    #[error("malformed ROM structure: {0}")]
+    Malformed(String),
     #[error("encrypted ROM input requires user-supplied keys")]
     EncryptedInput,
     #[error("ROM offset or size is outside the source image")]
