@@ -4,8 +4,10 @@
 //! expose only structural texture bindings; semantic roles remain `Unknown`
 //! unless the container metadata proves a stronger classification.
 
+mod bch;
 mod cgfx;
 
+pub use bch::BchModelInspector;
 pub use cgfx::CgfxModelInspector;
 
 use eo_core::TextureRole;
