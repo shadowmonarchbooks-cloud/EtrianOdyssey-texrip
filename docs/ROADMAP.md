@@ -335,3 +335,63 @@ The ROM layer is read-only and structural. Never guess encrypted bytes, containe
 ## 0.40 rule
 
 The texture engine owns PICA storage and pixel decoding, not container presentation policy. Never hash decoded RGBA pixels when the runtime profile expects encoded texture bytes, never include unrelated mip/alignment data in the base-level span, and never silently add a vertical flip to compensate for one container's convention.
+
+---
+
+# 0.50 — Native Containers
+
+0.50 turns the format-agnostic archive, texture-container and model contracts from 0.20 into bounded native implementations. This milestone establishes the reusable parsing framework and the structurally proven Untold container families; full EOU1/EO2U end-to-end parity remains the 0.60 gate.
+
+## 0.50 exit criteria
+
+### Archive framework
+
+- [x] Add checked archive byte access before exposing offsets, counts or payloads.
+- [x] Add a conservative single-buffer archive registry that leaves unknown data unknown.
+- [x] Carry recursive extraction budgets cumulatively across nested archive work.
+- [x] Parse FARC with bounded tables, names and member extents.
+- [x] Parse EPL general-resource packages with bounded resource/member metadata.
+- [x] Parse paired HPI/HPB archives, including native reverse-LZ decoding and truncated-member rejection.
+- [x] Decode Shift-JIS archive/member names explicitly without folding filesystem policy into binary parsing.
+
+### Texture-container adapters
+
+- [x] Parse Atlus STEX into normalized `EncodedTexture` metadata and exact padded level-0 payloads.
+- [x] Parse CGFX image-texture `TXOB` objects and normalize their encoded PICA payloads.
+- [x] Discover structurally valid CGFX payloads inside ATBC without assuming a fixed wrapper offset.
+- [x] Parse version-aware BCH texture descriptors and PICA command streams into normalized encoded textures.
+- [x] Discover structurally valid BCH payloads inside BAM2/ATBC without assuming a fixed wrapper offset.
+- [x] Reject raw `CGFX`/`BCH` magic when the candidate header or declared sections do not validate.
+- [x] Cap embedded-container scanning rather than treating arbitrary binary search as an extraction strategy.
+
+### Model and material structure
+
+- [x] Add native CGFX/CMDL/MTOB material inspection and structural Texture0/1/2 references.
+- [x] Add native BCH/H3D model material-table inspection and compatibility-dependent material record layouts.
+- [x] Preserve BCH texture-unit enabled/disabled state from `GPUREG_TEXUNIT_CONFIG`.
+- [x] Keep semantic texture roles `Unknown` when slot position or decoded appearance is the only evidence.
+- [x] Support direct model containers and the structurally validated ATBC/BAM2 wrapper paths used by the Untold families.
+
+### Safety, documentation and regression coverage
+
+- [x] Validate declared offsets, extents, counts and decompression allocations before use.
+- [x] Commit synthetic fixtures only; do not add copyrighted game/container data.
+- [x] Keep Nintendo keys, ROM content, firmware and proprietary assets outside the repository.
+- [x] Document the native archive/container/model boundary in `docs/CONTAINERS.md`.
+- [x] Pass Rust formatting, Clippy with warnings denied and the full workspace tests on Ubuntu and Windows.
+- [x] Keep the frozen Python regression matrix green on Ubuntu/Windows and Python 3.10/3.12.
+
+## 0.50 implementation notes
+
+- Canonical Rust workspace version: `0.50.0`.
+- `eo-archives` owns the bounded FARC, EPL and paired HPI/HPB parser implementations plus the conservative registry and shared recursive usage accounting.
+- `eo-textures` owns native STEX, CGFX/ATBC and BCH/BAM2/ATBC adapters that normalize structurally declared payloads into the raw PICA texture contract established by 0.40.
+- `eo-models::CgfxModelInspector` follows validated CGFX CMDL/MTOB/ReferenceTexture relationships rather than inferring material meaning from image appearance.
+- `eo-models::BchModelInspector` follows H3D model/material tables and texture-unit command metadata while preserving disabled references and unknown semantic roles.
+- BCH wrapper validation requires a real bounded content section and validates every declared section; a `BCH\0` byte sequence alone is not accepted as a payload.
+- Formats that the legacy implementation delegated to generic Texture Forge paths are not claimed merely because their extension or magic is known. If EOU1/EO2U parity demonstrates that an additional format is required, 0.60 must add it from structural evidence and regression coverage rather than broadening heuristics preemptively.
+- Exact H3D/CGFX shader semantics beyond the structural material/texture relationships required by the current model contract are parity work for 0.60 when supported by reference evidence.
+
+## 0.50 rule
+
+The container layer owns bounded structural interpretation, not compatibility guesses. A magic value is a probe hint, never proof by itself. Unknown formats remain unknown, semantic texture roles remain unknown without evidence, decompression is budgeted before allocation, and full Untold extraction parity is not declared until the 0.60 fingerprint comparison gate.
