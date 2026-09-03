@@ -27,3 +27,20 @@ from .hash_evidence_overhaul import install as _install_hash_evidence_overhaul
 
 _install_hash_evidence_overhaul()
 del _install_hash_evidence_overhaul
+
+from .materials_overhaul import (
+    install as _install_materials_overhaul,
+    sanitize_persistent_material_reports as _sanitize_persistent_material_reports,
+)
+
+_install_materials_overhaul()
+_legacy_cleanup_streamlined_workspace = _workspace.cleanup_streamlined_workspace
+
+
+def _material_safe_cleanup_streamlined_workspace(root):
+    _sanitize_persistent_material_reports(root)
+    return _legacy_cleanup_streamlined_workspace(root)
+
+
+_workspace.cleanup_streamlined_workspace = _material_safe_cleanup_streamlined_workspace
+del _install_materials_overhaul
