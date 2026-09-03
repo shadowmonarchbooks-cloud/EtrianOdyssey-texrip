@@ -26,6 +26,7 @@ The ROM is identified automatically from its Title ID and product code.
 - Retained 3D material reports no longer point at transient files after streamlined cleanup.
 - Reconstructed material alpha is explicitly diagnostic and is not presented as an exact full-GPU rendering reconstruction.
 - Copyright-safe structural fingerprints can be generated for local legal-ROM regression validation.
+- Windows/Linux Python 3.10/3.12 regression CI is part of the repository. Requiring that CI through `main` branch protection/rulesets is an external repository-admin follow-up documented in the roadmap.
 
 ## Human-readable Azahar pack names
 
