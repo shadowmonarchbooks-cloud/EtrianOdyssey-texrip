@@ -8,6 +8,8 @@ import subprocess
 import sys
 from typing import Callable
 
+from .safety import UnsafeArchivePath, safe_archive_join
+
 
 class ForgeError(RuntimeError):
     pass
@@ -116,10 +118,10 @@ def extract_romfs_selected(rom: str | Path, output_dir: str | Path, forge_root: 
             if not selected:
                 continue
             _p, data = fs.read_file_by_index(idx)
-            rel = Path(path.replace('\\', '/').lstrip('/'))
-            if '..' in rel.parts:
+            try:
+                dest = safe_archive_join(out, path)
+            except UnsafeArchivePath:
                 continue
-            dest = out / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
             written.append(dest)
