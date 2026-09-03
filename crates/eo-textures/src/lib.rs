@@ -6,6 +6,7 @@
 //! image vertically flipped) do not belong in this raw codec.
 
 mod etc1;
+pub mod stex;
 pub mod swizzle;
 mod uncompressed;
 
