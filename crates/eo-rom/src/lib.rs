@@ -1,11 +1,20 @@
-//! Format-agnostic ROM access contracts.
+//! Native, read-only Nintendo 3DS ROM access for EO-TexRip.
 //!
-//! 0.20 intentionally defines no NCSD/CIA/NCCH/RomFS parser. Later milestones
-//! implement these contracts without changing the application-facing model.
+//! 0.30 replaces the external ROM-reader dependency incrementally. Every parser
+//! is bounds-checked and may inspect encrypted metadata, but encrypted content is
+//! never exposed as cleartext without an explicit future user-key path.
+
+pub mod bytes;
+pub mod ncch;
+pub mod ncsd;
 
 use eo_core::GameIdentity;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use bytes::{ByteRange, ByteReader};
+pub use ncch::{NcchHeader, NcchImage, NcchRegion};
+pub use ncsd::{NcsdHeader, NcsdImage, NcsdPartition};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
