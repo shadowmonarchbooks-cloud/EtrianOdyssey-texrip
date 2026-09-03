@@ -283,7 +283,8 @@ mod tests {
         data[0..4].copy_from_slice(b"CGFX");
         data[4..6].copy_from_slice(&[0xff, 0xfe]);
         data[6..8].copy_from_slice(&0x14u16.to_le_bytes());
-        data[0x0c..0x10].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        let declared_size = data.len() as u32;
+        data[0x0c..0x10].copy_from_slice(&declared_size.to_le_bytes());
 
         let object = 0x40usize;
         data[object..object + 4].copy_from_slice(&TXOB_IMAGE_TYPE.to_le_bytes());
