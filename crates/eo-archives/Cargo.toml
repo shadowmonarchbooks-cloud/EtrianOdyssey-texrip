@@ -7,5 +7,6 @@ authors.workspace = true
 description = "Archive/container inspection contracts and extraction budgets for EO-TexRip"
 
 [dependencies]
+encoding_rs.workspace = true
 serde.workspace = true
 thiserror.workspace = true
