@@ -263,3 +263,75 @@ Do not port binary parsers into this milestone. 0.20 freezes application-facing 
 ## 0.30 rule
 
 The ROM layer is read-only and structural. Never guess encrypted bytes, container types, or game compatibility. Any future decryption support must be a separate explicit provider using keys supplied by the user; EO-TexRip must not ship or acquire Nintendo keys automatically.
+
+---
+
+# 0.40 — Native PICA200 Texture Engine
+
+0.40 replaces the independent Rust application's external texture-decoder dependency with a native raw PICA200 decoder. Container parsing remains a later milestone: 0.40 accepts normalized encoded texture payloads and defines exactly how storage, mips, decoding and runtime-hash byte spans behave.
+
+## 0.40 exit criteria
+
+### Storage and mip semantics
+
+- [x] Keep visible dimensions separate from 8x8-padded PICA storage dimensions.
+- [x] Calculate encoded byte spans from padded storage dimensions for every supported format.
+- [x] Keep sub-8-pixel mip levels in a complete 8x8 storage tile.
+- [x] Produce exact per-mip offsets and sizes with overflow checks.
+- [x] Expose the exact encoded level-0 span for runtime-hash adapters without later mips or container padding.
+
+### PICA tile order
+
+- [x] Implement row-major 8x8 macro tiles.
+- [x] Implement Morton/Z-order pixels inside each 8x8 tile using interleaved X/Y bits.
+- [x] Consume the entire padded storage image while cropping only decoded output to visible dimensions.
+- [x] Keep vertical/presentation flips out of the raw hardware codec so container adapters can express them explicitly.
+
+### Uncompressed PICA formats
+
+- [x] Decode RGBA8.
+- [x] Decode RGB8.
+- [x] Decode RGBA5551.
+- [x] Decode RGB565.
+- [x] Decode RGBA4.
+- [x] Decode LA8.
+- [x] Decode HILO8.
+- [x] Decode L8.
+- [x] Decode A8.
+- [x] Decode LA4.
+- [x] Decode L4.
+- [x] Decode A4.
+- [x] Preserve the documented raw channel/nibble order instead of normalizing container assumptions into the codec.
+
+### ETC1 / ETC1A4
+
+- [x] Decode ETC1 individual mode.
+- [x] Decode ETC1 differential mode and reject invalid 5-bit differential endpoints.
+- [x] Support both ETC subblock orientations and all modifier tables/selectors.
+- [x] Map the four sequential 4x4 ETC blocks to the four 16-pixel Morton groups of each 8x8 PICA tile.
+- [x] Interpret Nintendo 3DS ETC color blocks in their stored little-endian representation.
+- [x] Decode ETC1A4's little-endian 64-bit alpha plane with the same ETC pixel-index mapping.
+
+### Validation matrix
+
+- [x] Exercise every PICA format at 4x4, 7x7, 8x8, 9x9, 13x17, 64x64 and 257x129 visible dimensions.
+- [x] Reject a one-byte-short padded payload for every format.
+- [x] Exercise full mip chains down to visible 1x1 / stored 8x8.
+- [x] Test Morton order, 4-bit nibble order, packed 16-bit channels, ETC block order, selector mapping and A4 alpha mapping.
+- [x] Use synthetic fixtures only; do not commit copyrighted game textures.
+- [x] Document the raw-codec, orientation and runtime-hash boundaries in `docs/TEXTURE_ENGINE.md`.
+- [x] Pass Rust formatting, Clippy with warnings denied and the full workspace tests on Ubuntu and Windows.
+- [x] Keep the frozen Python regression matrix green while the native texture engine is introduced.
+
+## 0.40 implementation notes
+
+- Canonical Rust workspace version: `0.40.0`.
+- `eo-textures::NativePicaDecoder` owns the raw PICA200 decode path for all 14 formats represented by `TextureFormat`.
+- Encoded texture data is normalized as level 0 followed by later mip levels; future container adapters must normalize any different physical container arrangement before constructing `EncodedTexture`.
+- Runtime-hash adapters consume `EncodedTexture::runtime_hash_payload()`, which is exactly the PICA level-0 storage bytes.
+- Raw decoding does not perform a vertical flip. Container/model/export layers remain responsible for presentation transforms when structurally required.
+- Synthetic format tests cover both aligned and non-aligned dimensions and compressed/uncompressed storage.
+
+## 0.40 rule
+
+The texture engine owns PICA storage and pixel decoding, not container presentation policy. Never hash decoded RGBA pixels when the runtime profile expects encoded texture bytes, never include unrelated mip/alignment data in the base-level span, and never silently add a vertical flip to compensate for one container's convention.
