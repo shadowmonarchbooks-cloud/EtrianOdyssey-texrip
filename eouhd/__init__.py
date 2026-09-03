@@ -21,5 +21,9 @@ def _budgeted_reset_generated_workspace(root):
 
 
 _workspace.reset_generated_workspace = _budgeted_reset_generated_workspace
-
 del _install_extraction_budget
+
+from .hash_evidence_overhaul import install as _install_hash_evidence_overhaul
+
+_install_hash_evidence_overhaul()
+del _install_hash_evidence_overhaul
