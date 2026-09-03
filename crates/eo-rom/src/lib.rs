@@ -5,6 +5,7 @@
 //! never exposed as cleartext without an explicit future user-key path.
 
 pub mod bytes;
+pub mod cia;
 pub mod exefs;
 pub mod native;
 pub mod ncch;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use bytes::{ByteRange, ByteReader};
+pub use cia::{CiaContent, CiaHeader, CiaImage, CiaSection};
 pub use exefs::{ExeFsEntry, ExeFsImage};
 pub use native::NativeRom;
 pub use ncch::{NcchHeader, NcchImage, NcchRegion};
