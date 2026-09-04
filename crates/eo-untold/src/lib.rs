@@ -389,6 +389,8 @@ fn expand_hpi_pair(
     }
 
     let mut nested = Vec::new();
+    let mut output_index = BTreeMap::<String, usize>::new();
+    let mut writes = 0u64;
     for member in &inventory.members {
         let name = member
             .name
@@ -398,15 +400,28 @@ fn expand_hpi_pair(
             continue;
         };
         match parser.read_member(&hpi.data, &hpb.data, member, state.budget) {
-            Ok(data) => nested.push(VirtualFile {
-                path,
-                data,
-                depth: archive_depth.saturating_add(1),
-            }),
+            Ok(data) => {
+                writes += 1;
+                let file = VirtualFile {
+                    path: path.clone(),
+                    data,
+                    depth: archive_depth.saturating_add(1),
+                };
+                // Frozen unpack_hpi_pair() writes to a filesystem destination:
+                // duplicate member names count as multiple successful writes, but
+                // later writes replace the earlier bytes at that path. Preserve
+                // the first position while replacing its final in-memory payload.
+                if let Some(index) = output_index.get(&path).copied() {
+                    nested[index] = file;
+                } else {
+                    output_index.insert(path, nested.len());
+                    nested.push(file);
+                }
+            }
             Err(error) => state.issue(&hpi.path, "hpi_hpb_member", error),
         }
     }
-    state.summary.hpx_files += nested.len() as u64;
+    state.summary.hpx_files += writes;
     nested
 }
 
@@ -1249,6 +1264,33 @@ mod tests {
         hpi
     }
 
+    fn hpi_for_duplicate_uncompressed(
+        name: &str,
+        first_size: usize,
+        second_offset: usize,
+        second_size: usize,
+    ) -> Vec<u8> {
+        let name = name.as_bytes();
+        let names_base = 0x18 + 2 * 16;
+        let mut hpi = vec![0u8; names_base + name.len() + 1];
+        hpi[..4].copy_from_slice(b"HPIH");
+        hpi[0x12..0x14].copy_from_slice(&0u16.to_le_bytes());
+        hpi[0x14..0x16].copy_from_slice(&2u16.to_le_bytes());
+
+        hpi[0x18..0x1c].copy_from_slice(&0u32.to_le_bytes());
+        hpi[0x1c..0x20].copy_from_slice(&0u32.to_le_bytes());
+        hpi[0x20..0x24].copy_from_slice(&(first_size as u32).to_le_bytes());
+        hpi[0x24..0x28].copy_from_slice(&0u32.to_le_bytes());
+
+        hpi[0x28..0x2c].copy_from_slice(&0u32.to_le_bytes());
+        hpi[0x2c..0x30].copy_from_slice(&(second_offset as u32).to_le_bytes());
+        hpi[0x30..0x34].copy_from_slice(&(second_size as u32).to_le_bytes());
+        hpi[0x34..0x38].copy_from_slice(&0u32.to_le_bytes());
+
+        hpi[names_base..names_base + name.len()].copy_from_slice(name);
+        hpi
+    }
+
     fn farc_with_member(name: &str, payload: &[u8]) -> Vec<u8> {
         let mut data = vec![0u8; 0xc0 + payload.len()];
         data[0..4].copy_from_slice(b"FARC");
@@ -1380,6 +1422,39 @@ mod tests {
         assert_eq!(inventory.summary.decoded_before_dedup, 1);
         assert_eq!(inventory.extraction_usage.members, 1);
         assert_eq!(inventory.assets.len(), 1);
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
+    fn duplicate_hpx_member_paths_overwrite_but_count_each_write() {
+        let first = stex_a8(0x21);
+        let second = stex_a8(0x22);
+        let second_offset = first.len();
+        let mut hpb = first;
+        hpb.extend_from_slice(&second);
+        let hpi = hpi_for_duplicate_uncompressed(
+            "same.stex",
+            second_offset,
+            second_offset,
+            second.len(),
+        );
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([
+                ("data/dup.hpi".to_owned(), hpi),
+                ("data/dup.hpb".to_owned(), hpb),
+            ]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.hpx_pairs, 1);
+        assert_eq!(inventory.summary.hpx_files, 2);
+        assert_eq!(inventory.summary.strict_candidate_files, 1);
+        assert_eq!(inventory.summary.decoded_before_dedup, 1);
+        assert_eq!(inventory.assets.len(), 1);
+        assert_eq!(
+            inventory.assets[0].candidate_hash,
+            crate::cityhash::cityhash64_hex(&[0x22; 64])
+        );
         assert!(inventory.issues.is_empty());
     }
 
