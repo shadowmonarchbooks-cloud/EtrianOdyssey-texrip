@@ -1,4 +1,7 @@
-use crate::{MaterialRecord, ModelError, ModelInspector, ModelInventory, TextureReference};
+use crate::{
+    AlphaInput, AlphaStage, MaterialRecord, ModelError, ModelInspector, ModelInventory,
+    TextureReference,
+};
 use encoding_rs::SHIFT_JIS;
 use eo_core::TextureRole;
 
@@ -10,6 +13,9 @@ const TEXINFO_TYPE: u32 = 0x8000_0000;
 const REFERENCE_TXOB_TYPE: u32 = 0x2000_0004;
 const MAX_SELF_STRING_BYTES: usize = 512;
 const MAX_EMBEDDED_CGFX: usize = 16;
+const FRAGMENT_COMBINER_OFFSET: usize = 0x2c;
+const FRAGMENT_STAGE_SIZE: usize = 0x1c;
+const FRAGMENT_STAGE_COUNT: usize = 6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CgfxModelInspector;
@@ -77,10 +83,14 @@ fn inspect_cgfx_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
             });
         }
 
+        let index = materials.len() as u32;
         materials.push(MaterialRecord {
-            index: materials.len() as u32,
+            index,
+            model_index: 0,
+            model_material_index: index,
             name,
             textures,
+            alpha_stages: fragment_alpha_stages(payload, object),
         });
     }
 
@@ -89,6 +99,72 @@ fn inspect_cgfx_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
         model_name,
         materials,
     })
+}
+
+fn fragment_alpha_stages(data: &[u8], material: usize) -> Vec<AlphaStage> {
+    let Some(fragment_field) = material.checked_add(0x288) else {
+        return Vec::new();
+    };
+    let Some(relative) = read_u32(data, fragment_field) else {
+        return Vec::new();
+    };
+    if relative == 0 {
+        return Vec::new();
+    }
+    let Some(fragment) = fragment_field.checked_add(relative as usize) else {
+        return Vec::new();
+    };
+    let Some(combiner_base) = fragment.checked_add(FRAGMENT_COMBINER_OFFSET) else {
+        return Vec::new();
+    };
+    let Some(required_end) = combiner_base
+        .checked_add(FRAGMENT_STAGE_COUNT * FRAGMENT_STAGE_SIZE)
+        .and_then(|end| end.checked_add(8))
+    else {
+        return Vec::new();
+    };
+    if required_end > data.len() {
+        return Vec::new();
+    }
+
+    let mut stages = Vec::with_capacity(FRAGMENT_STAGE_COUNT);
+    for stage in 0..FRAGMENT_STAGE_COUNT {
+        let offset = combiner_base + stage * FRAGMENT_STAGE_SIZE;
+        let Some(source_alpha) = read_u16(data, offset + 0x06) else {
+            return Vec::new();
+        };
+        let Some(operands) = read_u32(data, offset + 0x0c) else {
+            return Vec::new();
+        };
+        let Some(alpha_mode) = read_u16(data, offset + 0x12).map(|value| (value & 0x0f) as u8)
+        else {
+            return Vec::new();
+        };
+        let arity = combiner_arity(alpha_mode);
+        let mut inputs = Vec::with_capacity(arity);
+        for input in 0..arity {
+            inputs.push(AlphaInput {
+                input: input as u8,
+                source_id: ((source_alpha >> (input * 4)) & 0x0f) as u8,
+                operand_id: ((operands >> (12 + input * 4)) & 0x07) as u8,
+            });
+        }
+        stages.push(AlphaStage {
+            stage: stage as u8,
+            combiner_id: alpha_mode,
+            inputs,
+        });
+    }
+    stages
+}
+
+fn combiner_arity(mode: u8) -> usize {
+    match mode {
+        0 => 1,
+        1 | 2 | 3 | 5 | 6 | 7 => 2,
+        4 | 8 | 9 => 3,
+        _ => 3,
+    }
 }
 
 fn locate_cgfx_payload(data: &[u8]) -> Option<&[u8]> {
@@ -208,6 +284,10 @@ fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
 mod tests {
     use super::*;
 
+    fn put_u16(data: &mut [u8], offset: usize, value: u16) {
+        data[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
     fn put_u32(data: &mut [u8], offset: usize, value: u32) {
         data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
@@ -219,7 +299,7 @@ mod tests {
     }
 
     fn synthetic_cgfx() -> Vec<u8> {
-        let mut data = vec![0u8; 0x580];
+        let mut data = vec![0u8; 0x700];
         data[0..4].copy_from_slice(b"CGFX");
         data[4..6].copy_from_slice(&[0xff, 0xfe]);
         data[6..8].copy_from_slice(&0x14u16.to_le_bytes());
@@ -246,6 +326,14 @@ mod tests {
         put_u32(&mut data, txob, REFERENCE_TXOB_TYPE);
         data[txob + 4..txob + 8].copy_from_slice(b"TXOB");
         put_self_string(&mut data, txob + 0x18, 0x500, b"body_tex");
+
+        let fragment_field = material + 0x288;
+        let fragment = 0x580usize;
+        put_u32(&mut data, fragment_field, (fragment - fragment_field) as u32);
+        let stage0 = fragment + FRAGMENT_COMBINER_OFFSET;
+        put_u16(&mut data, stage0 + 0x06, 3);
+        put_u32(&mut data, stage0 + 0x0c, 2 << 12);
+        put_u16(&mut data, stage0 + 0x12, 0);
         data
     }
 
@@ -258,11 +346,17 @@ mod tests {
         assert_eq!(inventory.materials.len(), 1);
         let material = &inventory.materials[0];
         assert_eq!(material.name.as_deref(), Some("body_material"));
+        assert_eq!(material.model_index, 0);
+        assert_eq!(material.model_material_index, 0);
         assert_eq!(material.textures.len(), 1);
         assert_eq!(material.textures[0].slot, 0);
         assert_eq!(material.textures[0].internal_name, "body_tex");
         assert_eq!(material.textures[0].role, TextureRole::Unknown);
         assert!(material.textures[0].enabled);
+        assert_eq!(material.alpha_stages.len(), 6);
+        assert_eq!(material.alpha_stages[0].combiner_id, 0);
+        assert_eq!(material.alpha_stages[0].inputs[0].source_id, 3);
+        assert_eq!(material.alpha_stages[0].inputs[0].operand_id, 2);
     }
 
     #[test]
