@@ -1,6 +1,8 @@
-# 0.60 Untold Parity
+# 0.60 Untold Native Extraction
 
-0.60 composes the native Rust ROM, archive, texture, and model layers into the first end-to-end Etrian Odyssey Untold / Etrian Odyssey 2 Untold extraction path. The frozen Python 0.13 implementation remains the behavioral reference for this milestone only; parity is measured with privacy-safe structural fingerprints, never by committing proprietary game data.
+0.60 composes the native Rust ROM, archive, texture, and model layers into the first usable end-to-end Etrian Odyssey Untold / Etrian Odyssey 2 Untold extractor. The product goal is straightforward: give EO-TexRip a supported decrypted ROM and get usable decoded texture files back without Python or 3DS Texture Forge.
+
+The frozen Python 0.13 implementation remains available as optional regression evidence. Exact fingerprint equality is **not** a 0.60 release blocker. Native behavior should be driven by format correctness, real extraction results, and bounded synthetic tests rather than reproducing legacy quirks.
 
 ## Exit criteria
 
@@ -11,89 +13,73 @@
 - [x] Enumerate candidate RomFS files through the native `RomReader` contract.
 - [x] Reject oversized candidate reads before requesting their payload bytes.
 - [x] Pair HPI/HPB paths case-insensitively without relying on host filesystem behavior.
-- [x] Mirror the frozen archive stage order in memory: recursively expand HPI/HPB first, then FARC over RomFS+HPX roots, then EPL over RomFS+HPX+FARC roots, without revisiting an earlier archive family from a later stage.
-- [x] Mirror frozen archive discovery semantics: FARC by four-byte magic, EPL by `.epl` extension, with malformed discoveries counted before parse failure.
-- [x] Mirror family-specific extracted-member naming/safety behavior: HPI paths are traversal-checked, FARC names are flattened/sanitized, and EPL names are basename-sanitized with deterministic suffix inference.
-- [x] Keep extracted proprietary bytes out of persistent parity artifacts.
-- [x] Keep archive discovery counters separate from the frozen strict texture/model candidate count; extracted members are tested independently after expansion.
+- [x] Expand HPI/HPB, FARC, and EPL archives through bounded native parsers.
+- [x] Keep archive discovery counters separate from strict texture/model candidates.
+- [x] Keep Nintendo keys, ROM bytes, firmware, and proprietary game assets out of the repository.
 
 ### Native texture and model path
 
 - [x] Route STEX through the native STEX adapter and native PICA decoder.
 - [x] Route direct and ATBC-wrapped CGFX through native texture and material inspection.
 - [x] Route direct and BAM/ATBC-wrapped BCH through native texture and material inspection.
-- [x] Preserve the frozen parser provenance labels used by asset descriptors (`eou_stex_strict`, `cgfx_struct`, `bch_struct`).
-- [x] Deduplicate decoded assets by `(candidate_hash, format, width, height)` like the frozen reference.
+- [x] Deduplicate decoded assets by `(candidate_hash, format, width, height)`.
 - [x] Merge material bindings through structural texture-name relationships rather than image heuristics.
-- [x] Surface known legacy-only CTPK/CTXB/CMB candidates as explicit parity gaps instead of silently claiming support.
-- [x] Expose structural model counts from CGFX `CMDL` presence and resolved BCH/H3D model pointer tables rather than inferring them from payload counts.
-- [x] Carry PICA/CGFX/BCH alpha source, operand, and combiner metadata into the native material inventory.
-- [x] Reproduce the frozen material summary rules for resolved bindings, explicit texture channels, hardware-constant alpha inputs, and scalar-resolvable alpha pipelines.
+- [x] Expose structural model and material relationships for CGFX and BCH/H3D.
+- [x] Surface known but unsupported CTPK/CTXB/CMB candidates explicitly instead of silently claiming support.
 
-### Runtime candidate hash and fingerprint compatibility
+### User-facing native extraction
 
-- [x] Port the CityHash64 variant used by the frozen reference/Azahar candidate-hash path.
-- [x] Hash the exact encoded PICA base-level bytes rather than decoded RGBA or container padding.
-- [x] Add cross-language CityHash64 reference vectors.
-- [x] Emit schema-1 `eo-texrip-structural-regression-fingerprint` data without ROM bytes, decoded pixels, source paths, or model/texture names.
-- [x] Match the frozen asset descriptor fields, sort order, aggregate counter keys, and comparison keys.
-- [x] Pin the cross-language canonical asset-descriptor SHA-256 vector in Rust tests.
-- [x] Add a native CLI that emits a schema-1 fingerprint and optionally compares it to a frozen schema-1 reference with a failing exit status on mismatch.
+- [x] Retain successfully decoded RGBA8 pixels for native output rather than discarding them after validation.
+- [x] Add `eo-texrip extract <decrypted-rom> [-o|--output <directory>]`.
+- [x] Write decoded textures as ordinary RGBA PNG files with no Python or external image tool dependency.
+- [x] Use deterministic Windows-safe filenames and coarse category directories.
+- [x] Preserve internal texture names when available and fall back to source-derived names when they are not.
+- [x] Write `extraction-report.json` with game identity, output mapping, parser provenance, dimensions, hashes, material-binding counts, and warnings.
+- [x] Keep unsupported-container/decode failures visible in the report instead of dropping them silently.
+- [ ] Smoke-test the native extractor against a user-owned decrypted EOU1 ROM and inspect the produced PNG set.
+- [ ] Smoke-test the native extractor against a user-owned decrypted EO2U ROM and inspect the produced PNG set.
+- [ ] Implement any additional container support only when a real extraction shows that missing support is preventing textures from being recovered.
 
-### Real-game parity gate
+### Optional regression tooling
 
-- [ ] Produce a frozen Python schema-1 fingerprint from a local legal EOU1 source/workspace.
-- [ ] Produce the native Rust schema-1 fingerprint from the same EOU1 source and make all comparison keys match.
-- [ ] Produce a frozen Python schema-1 fingerprint from a local legal EO2U source/workspace.
-- [ ] Produce the native Rust schema-1 fingerprint from the same EO2U source and make all comparison keys match.
-- [ ] If a residual CTPK/CTXB/CMB or other format appears in a real mismatch, implement it from structural evidence and add synthetic regression coverage before accepting it.
+- [x] Port the CityHash64 variant used by the legacy/Azahar candidate-hash path.
+- [x] Emit privacy-safe schema-1 structural fingerprints.
+- [x] Keep the native fingerprint comparison CLI available for developer diagnostics.
+- [x] Preserve the frozen Python regression suite in CI while the old implementation remains in the repository.
+
+Fingerprint mismatches may be useful debugging signals, but they do not override a correct native extraction result and they do not gate 0.60 by themselves.
 
 ### Quality and legal boundary
 
 - [ ] Pass Rust formatting, Clippy with warnings denied, and the full workspace tests on Ubuntu and Windows at the final 0.60 head.
 - [ ] Keep the frozen Python regression matrix green on Ubuntu/Windows and Python 3.10/3.12 at the final 0.60 head.
 - [x] Use synthetic fixtures only in the repository.
-- [x] Do not add Nintendo keys, ROM data, firmware, decoded game images, local source paths, or proprietary model/texture names to committed parity evidence.
+- [x] Do not add Nintendo keys, ROM data, firmware, decoded game images, local source paths, or proprietary model/texture names to committed test evidence.
 
-## Fingerprint contract
+## Native extraction workflow
 
-The native fingerprint intentionally mirrors `eouhd.regression.build_structural_fingerprint()` schema 1. Asset descriptors contain only:
-
-- candidate CityHash64;
-- verified runtime hashes, when independently known;
-- dimensions, format, and mip index;
-- parser provenance;
-- coarse category;
-- structural material-binding count.
-
-The descriptor list is sorted deterministically and SHA-256 hashed as compact canonical JSON. Aggregate parser, format, dimension, category, archive, model, and material counters are then compared field-by-field. Source paths and embedded resource names are transient matching data and must not be serialized into the fingerprint.
-
-The compatibility tests pin legacy CityHash64 vectors and a complete two-asset canonical descriptor digest. Synthetic parser tests also cover multi-model BCH inventories, CGFX/BCH alpha-stage transport, material-alpha reduction rules, bounded RomFS probing, the frozen two-stage candidate gate, staged HPX/FARC/EPL expansion, archive discovery semantics, family-specific member naming, and the distinction between archive discovery and strict decode candidates.
-
-## Local parity workflow
-
-The frozen Python side remains the authority for generating the expected schema-1 fingerprint from a local legal reference workspace:
+During development, the extractor can be run directly from the workspace:
 
 ```text
-python tools/fingerprint_workspace.py <reference-workspace> -o eou1-python.json
+cargo run -p eo-untold --bin eo-texrip -- extract <decrypted-rom> --output <directory>
 ```
 
-The native side can then emit and compare the same privacy-safe schema from a cleartext ROM container whose NCCH metadata identifies EOU1 or EO2U:
+After building the binary, the user-facing form is:
 
 ```text
-cargo run -p eo-untold --bin untold-fingerprint -- <decrypted-rom> eou1-python.json
+eo-texrip.exe extract <decrypted-rom> --output <directory>
 ```
 
-The native fingerprint is written to standard output. When a reference fingerprint is supplied, a structural comparison is written to standard error and the process exits with status 1 on a mismatch. Encrypted ROM content remains outside the 0.60 parser boundary; EO-TexRip does not ship or acquire Nintendo keys.
+If `--output` is omitted, EO-TexRip creates `<rom-name>-textures` beside the ROM. The output contains category folders of PNG files plus `extraction-report.json`.
+
+See `docs/NATIVE_EXTRACTION.md` for the current usage and supported-input boundary.
 
 ## Remaining verification boundary
 
-The synthetic/reference-backed implementation now includes structural model counts, native material-alpha summary semantics, the frozen two-stage candidate gate, and the frozen staged archive/discovery behavior. Those fields and counters are no longer placeholders, but they are still provisional until the same legal EOU1 and EO2U sources are fingerprinted by both the frozen Python pipeline and the native Rust pipeline.
+The remaining 0.60 verification is practical extraction, not legacy fingerprint equality. EOU1 and EO2U should each be run through the native extractor using user-owned decrypted inputs, the produced PNGs should be inspectable, and any warnings that correspond to genuinely missing textures should drive the next parser work.
 
-CTPK, CTXB, and CMB remain intentionally unsupported. Their magic or filename extensions alone are not evidence that they are required for Untold parity. If either real-game comparison exposes one of these formats—or another previously unseen structural difference—the mismatch is the evidence used to drive a bounded native parser and synthetic regression test.
-
-The next authoritative input for 0.60 is therefore the pair of local EOU1/EO2U schema-1 comparisons. Until those comparisons pass, 0.60 is not complete and should not be merged as the parity milestone.
+CTPK, CTXB, and CMB remain intentionally unsupported until real extraction evidence shows they are needed for one of the Untold games. Their magic or filename extensions alone are not sufficient reason to add speculative parsers.
 
 ## 0.60 rule
 
-Do not tune parsers or counters to opaque expected numbers. Every parity fix must be explained by format structure, exact hash semantics, or a reproducible reference behavior and must receive synthetic regression coverage. Unknown data stays unknown until the evidence is strong enough to make it native support.
+Prefer correct, bounded native extraction over behavioral imitation of the legacy app. Do not tune parsers to opaque expected numbers. Every format change must be explained by file structure or a reproducible extraction failure and must receive synthetic regression coverage. Unknown data stays unknown until there is enough evidence to support it safely.
