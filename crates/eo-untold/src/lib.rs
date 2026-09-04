@@ -574,12 +574,7 @@ fn inspect_model(
             return BTreeMap::new();
         }
     };
-    if inventory.model_name.is_some() || !inventory.materials.is_empty() {
-        // The 0.50 inspector currently returns one payload-level inventory. If a
-        // real parity run proves multi-model payloads, expose the structural model
-        // count from eo-models rather than inferring it here.
-        state.summary.models_found += 1;
-    }
+    state.summary.models_found += u64::from(inventory.model_count);
     state.summary.model_materials_found += inventory.materials.len() as u64;
 
     let model_name = inventory.model_name.as_deref().unwrap_or("");
