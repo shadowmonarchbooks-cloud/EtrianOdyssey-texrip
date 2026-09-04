@@ -2,10 +2,15 @@ use eo_archives::ExtractionBudget;
 use eo_rom::NativeRom;
 use eo_untold::{inventory_reader, ParityAsset, ScanIssue, UntoldError};
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
 pub const REPORT_NAME: &str = "extraction-report.json";
+pub const AZAHAR_PACK_NAME: &str = "pack.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExportedTexture {
@@ -33,6 +38,22 @@ pub struct ExtractionReport {
     pub textures: Vec<ExportedTexture>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct AzaharPackOptions {
+    skip_mipmap: bool,
+    flip_png_files: bool,
+    use_new_hash: bool,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct AzaharPackConfig {
+    author: String,
+    version: String,
+    description: String,
+    options: AzaharPackOptions,
+    textures: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Error)]
 pub enum ExtractionError {
     #[error("could not read/write extraction files: {0}")]
@@ -41,8 +62,14 @@ pub enum ExtractionError {
     Rom(#[from] eo_rom::RomError),
     #[error("unsupported or invalid Untold ROM: {0}")]
     Untold(#[from] UntoldError),
-    #[error("could not write extraction report: {0}")]
+    #[error("could not write extraction metadata: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("Azahar hash {hash} maps to both {first_path} and {second_path}")]
+    AzaharHashConflict {
+        hash: String,
+        first_path: String,
+        second_path: String,
+    },
 }
 
 pub fn default_output_path(source: &Path) -> PathBuf {
@@ -121,6 +148,11 @@ fn export_inventory(
         });
     }
 
+    let pack = build_azahar_pack(&textures)?;
+    let mut pack_json = serde_json::to_vec_pretty(&pack)?;
+    pack_json.push(b'\n');
+    fs::write(output.join(AZAHAR_PACK_NAME), pack_json)?;
+
     let report = ExtractionReport {
         schema: "eo-texrip-native-extraction-report-v1".to_owned(),
         profile_id: identity.profile_id,
@@ -135,6 +167,44 @@ fn export_inventory(
     json.push(b'\n');
     fs::write(output.join(REPORT_NAME), json)?;
     Ok(report)
+}
+
+fn build_azahar_pack(textures: &[ExportedTexture]) -> Result<AzaharPackConfig, ExtractionError> {
+    let mut mappings = BTreeMap::<String, String>::new();
+    for texture in textures {
+        let hash = texture.candidate_hash.to_ascii_uppercase();
+        let filename = texture
+            .file
+            .rsplit('/')
+            .next()
+            .unwrap_or(&texture.file)
+            .to_owned();
+        match mappings.get(&hash) {
+            Some(existing) if existing != &filename => {
+                return Err(ExtractionError::AzaharHashConflict {
+                    hash,
+                    first_path: existing.clone(),
+                    second_path: filename,
+                });
+            }
+            Some(_) => {}
+            None => {
+                mappings.insert(hash, filename);
+            }
+        }
+    }
+
+    Ok(AzaharPackConfig {
+        author: "EO-TexRip".to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        description: "EO-TexRip native extraction for Azahar custom textures".to_owned(),
+        options: AzaharPackOptions {
+            skip_mipmap: true,
+            flip_png_files: true,
+            use_new_hash: true,
+        },
+        textures: mappings,
+    })
 }
 
 fn preferred_name(asset: &ParityAsset) -> String {
@@ -317,6 +387,21 @@ fn crc32(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
 
+    fn exported_texture(hash: &str, file: &str) -> ExportedTexture {
+        ExportedTexture {
+            file: file.to_owned(),
+            source: "source.stex".to_owned(),
+            internal_name: String::new(),
+            candidate_hash: hash.to_owned(),
+            width: 8,
+            height: 8,
+            format: 13,
+            parser_used: "test".to_owned(),
+            category: "ui".to_owned(),
+            material_binding_count: 0,
+        }
+    }
+
     #[test]
     fn default_output_sits_beside_rom() {
         assert_eq!(
@@ -330,6 +415,38 @@ mod tests {
         assert_eq!(safe_filename_component("CON"), "_CON");
         assert_eq!(safe_filename_component("LPT9.png"), "_LPT9.png");
         assert_eq!(safe_filename_component("boss:face?01"), "boss_face_01");
+    }
+
+    #[test]
+    fn azahar_pack_uses_new_hash_and_png_basenames() {
+        let pack = build_azahar_pack(&[
+            exported_texture("abcdef0123456789", "ui/menu__8x8_f13_ABCDEF0123456789.png"),
+            exported_texture("0011223344556677", "maps/floor__8x8_f13_0011223344556677.png"),
+        ])
+        .unwrap();
+        assert!(pack.options.use_new_hash);
+        assert!(pack.options.skip_mipmap);
+        assert!(pack.options.flip_png_files);
+        assert_eq!(
+            pack.textures.get("ABCDEF0123456789"),
+            Some(&"menu__8x8_f13_ABCDEF0123456789.png".to_owned())
+        );
+        assert_eq!(
+            pack.textures.get("0011223344556677"),
+            Some(&"floor__8x8_f13_0011223344556677.png".to_owned())
+        );
+    }
+
+    #[test]
+    fn azahar_pack_rejects_conflicting_hashes() {
+        let result = build_azahar_pack(&[
+            exported_texture("AABB", "ui/first.png"),
+            exported_texture("AABB", "maps/second.png"),
+        ]);
+        assert!(matches!(
+            result,
+            Err(ExtractionError::AzaharHashConflict { .. })
+        ));
     }
 
     #[test]
