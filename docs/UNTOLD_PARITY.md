@@ -31,7 +31,8 @@
 - [x] Add cross-language CityHash64 reference vectors.
 - [x] Emit schema-1 `eo-texrip-structural-regression-fingerprint` data without ROM bytes, decoded pixels, source paths, or model/texture names.
 - [x] Match the frozen asset descriptor fields, sort order, aggregate counter keys, and comparison keys.
-- [ ] Pin the cross-language canonical asset-descriptor SHA-256 vector in Rust tests.
+- [x] Pin the cross-language canonical asset-descriptor SHA-256 vector in Rust tests.
+- [x] Add a native CLI that emits a schema-1 fingerprint and optionally compares it to a frozen schema-1 reference with a failing exit status on mismatch.
 
 ### Real-game parity gate
 
@@ -62,6 +63,24 @@ The native fingerprint intentionally mirrors `eouhd.regression.build_structural_
 - structural material-binding count.
 
 The descriptor list is sorted deterministically and SHA-256 hashed as compact canonical JSON. Aggregate parser, format, dimension, category, archive, model, and material counters are then compared field-by-field. Source paths and embedded resource names are transient matching data and must not be serialized into the fingerprint.
+
+The compatibility test pins both the legacy CityHash64 vectors and a complete two-asset canonical descriptor digest. This catches accidental changes to JSON field order, separators, descriptor sorting, parser labels, category rules, format IDs, or candidate hashes even when aggregate counts still look plausible.
+
+## Local parity workflow
+
+The frozen Python side remains the authority for generating the expected schema-1 fingerprint from a local legal reference workspace:
+
+```text
+python tools/fingerprint_workspace.py <reference-workspace> -o eou1-python.json
+```
+
+The native side can then emit and compare the same privacy-safe schema from a cleartext ROM container whose NCCH metadata identifies EOU1 or EO2U:
+
+```text
+cargo run -p eo-untold --bin untold-fingerprint -- <decrypted-rom> eou1-python.json
+```
+
+The native fingerprint is written to standard output. When a reference fingerprint is supplied, a structural comparison is written to standard error and the process exits with status 1 on a mismatch. Encrypted ROM content remains outside the 0.60 parser boundary; EO-TexRip does not ship or acquire Nintendo keys.
 
 ## Known provisional gaps
 
