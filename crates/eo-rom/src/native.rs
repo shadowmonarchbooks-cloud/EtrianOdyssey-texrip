@@ -210,10 +210,6 @@ fn identity_from_ncch(header: &NcchHeader) -> Result<RomIdentityHint, RomError> 
     })
 }
 
-fn read_from_romfs(data: &[u8], target: &str) -> Result<Vec<u8>, RomError> {
-    read_from_romfs_prefix(data, target, usize::MAX)
-}
-
 fn read_from_romfs_prefix(
     data: &[u8],
     target: &str,
