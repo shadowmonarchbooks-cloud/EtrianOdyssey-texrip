@@ -40,6 +40,7 @@ impl ModelInspector for BchModelInspector {
 fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
     let header = parse_header(data)?;
     let model_offsets = pointer_table_entries(data, &header, SECTION_MODELS, MAX_MODELS)?;
+    let model_count = model_offsets.len() as u32;
     let mut model_names = Vec::new();
     let mut materials = Vec::new();
 
@@ -116,6 +117,7 @@ fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
     };
 
     Ok(ModelInventory {
+        model_count,
         model_name,
         materials,
     })
@@ -527,6 +529,7 @@ mod tests {
     fn direct_bch_material_names_and_enable_bits_are_structural() {
         let data = synthetic_bch_model();
         let inventory = BchModelInspector.inspect(&data).unwrap();
+        assert_eq!(inventory.model_count, 1);
         assert_eq!(inventory.model_name.as_deref(), Some("enemy_model"));
         assert_eq!(inventory.materials.len(), 1);
         let material = &inventory.materials[0];
@@ -536,6 +539,16 @@ mod tests {
         assert_eq!(material.textures[0].internal_name, "body_tex");
         assert_eq!(material.textures[0].role, TextureRole::Unknown);
         assert!(material.textures[0].enabled);
+    }
+
+    #[test]
+    fn model_count_comes_from_resolved_h3d_model_pointer_table() {
+        let mut data = synthetic_bch_model();
+        put_u32(&mut data, 0x44, 2);
+        put_u32(&mut data, 0x84, 0x160);
+        let inventory = BchModelInspector.inspect(&data).unwrap();
+        assert_eq!(inventory.model_count, 2);
+        assert_eq!(inventory.materials.len(), 1);
     }
 
     #[test]
