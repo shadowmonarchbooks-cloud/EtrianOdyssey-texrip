@@ -32,14 +32,17 @@ The product gate is practical native extraction: a user-owned decrypted/cleartex
 - [x] Write decoded textures as ordinary RGBA PNG files without Python or an external image tool.
 - [x] Use deterministic Windows-safe filenames and coarse category folders.
 - [x] Write `extraction-report.json` with output mappings and extraction warnings.
+- [x] Emit an Azahar-ready `pack.json` mapping each exact new-hash CityHash64 value to its exported PNG.
 - [x] Add a Windows desktop GUI with ROM picker, output-folder picker, drag-and-drop input, extraction status, warning summary, and output-folder action.
 - [x] Run extraction off the GUI thread so the window remains responsive.
 - [x] Add a Windows x64 release-candidate packaging workflow producing `EO-TexRip.exe`, a ZIP archive, and SHA-256 checksum.
 
 ### Practical 0.60 gate
 
-- [ ] Publish the Windows `0.60.0-rc.1` prerelease from a green exact head.
-- [ ] Smoke-test the packaged RC with a user-owned decrypted EOU1 ROM and inspect PNG output/report.
+- [x] Publish the Windows `0.60.0-rc.1` prerelease from a green Windows package workflow.
+- [x] Smoke-test the packaged RC with a user-owned decrypted EOU1 ROM and inspect PNG output/report.
+- [ ] Publish `0.60.0-rc.2` with automatic Azahar `pack.json` generation.
+- [ ] Verify RC2's generated EOU1 pack loads through Azahar's custom-texture path.
 - [ ] Smoke-test the packaged RC with a user-owned decrypted EO2U ROM and inspect PNG output/report.
 - [ ] Implement CTPK/CTXB/CMB or another format only if a real extraction report shows it is preventing useful Untold textures from being recovered.
 
