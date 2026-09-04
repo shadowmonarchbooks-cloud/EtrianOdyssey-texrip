@@ -7,8 +7,7 @@
 //! layer until structural evidence supports it.
 
 use eo_archives::{
-    ArchiveError, ArchiveParser, EplParser, ExtractionBudget, ExtractionUsage, FarcParser,
-    HpiHpbParser,
+    ArchiveParser, EplParser, ExtractionBudget, ExtractionUsage, FarcParser, HpiHpbParser,
 };
 use eo_core::GameId;
 use eo_models::{BchModelInspector, CgfxModelInspector, ModelInspector};
@@ -144,9 +143,21 @@ pub fn inventory_reader<R: RomReader>(
     }
 
     let entries = reader.entries()?;
+    let mut state = ScanState::new(budget);
     let mut files = Vec::new();
     for entry in &entries {
         if !candidate_path(&entry.virtual_path) {
+            continue;
+        }
+        if entry.size > budget.max_archive_bytes {
+            state.issue(
+                &entry.virtual_path,
+                "romfs_budget",
+                format!(
+                    "candidate file size {} exceeds archive read ceiling {}",
+                    entry.size, budget.max_archive_bytes
+                ),
+            );
             continue;
         }
         match reader.read_entry(&entry.virtual_path) {
@@ -154,25 +165,10 @@ pub fn inventory_reader<R: RomReader>(
                 path: normalize_virtual_path(&entry.virtual_path),
                 data,
             }),
-            Err(error) => {
-                let mut state = ScanState::new(budget);
-                state.issue(&entry.virtual_path, "romfs_read", error);
-                return Ok(UntoldInventory {
-                    profile_id: profile.profile_id.to_owned(),
-                    game_id: profile.game_id,
-                    title_id: hint.title_id.map(|value| value.to_string()),
-                    product_code: hint.product_code,
-                    romfs_files: entries.len() as u64,
-                    material_texture_bindings: 0,
-                    extraction_usage: state.usage,
-                    summary: state.summary,
-                    issues: state.issues,
-                });
-            }
+            Err(error) => state.issue(&entry.virtual_path, "romfs_read", error),
         }
     }
 
-    let mut state = ScanState::new(budget);
     scan_file_set(files, 0, &mut state);
     state.summary.issues = state.issues.len() as u64;
 
@@ -197,7 +193,7 @@ fn scan_file_set(files: Vec<VirtualFile>, depth: u16, state: &mut ScanState) {
 
     let mut consumed = BTreeSet::new();
     for (index, file) in files.iter().enumerate() {
-        if extension(&file.path) != Some("hpi") || consumed.contains(&index) {
+        if !has_extension(&file.path, "hpi") || consumed.contains(&index) {
             continue;
         }
         let partner_key = path_key(&replace_extension(&file.path, "hpb"));
@@ -210,7 +206,7 @@ fn scan_file_set(files: Vec<VirtualFile>, depth: u16, state: &mut ScanState) {
     }
 
     for (index, file) in files.into_iter().enumerate() {
-        if consumed.contains(&index) || extension(&file.path) == Some("hpb") {
+        if consumed.contains(&index) || has_extension(&file.path, "hpb") {
             continue;
         }
         scan_single_file(file, depth, state);
@@ -239,10 +235,7 @@ fn scan_hpi_pair(hpi: &VirtualFile, hpb: &VirtualFile, depth: u16, state: &mut S
             Ok(data) => nested.push(VirtualFile {
                 path: child_path(
                     &hpi.path,
-                    member
-                        .name
-                        .as_deref()
-                        .unwrap_or_else(|| "unnamed_member.bin"),
+                    member.name.as_deref().unwrap_or("unnamed_member.bin"),
                 ),
                 data,
             }),
@@ -310,10 +303,7 @@ fn scan_single_archive(file: VirtualFile, depth: u16, state: &mut ScanState, fla
             Ok(data) => nested.push(VirtualFile {
                 path: child_path(
                     &file.path,
-                    member
-                        .name
-                        .as_deref()
-                        .unwrap_or_else(|| "unnamed_member.bin"),
+                    member.name.as_deref().unwrap_or("unnamed_member.bin"),
                 ),
                 data,
             }),
@@ -326,7 +316,7 @@ fn scan_single_archive(file: VirtualFile, depth: u16, state: &mut ScanState, fla
 }
 
 fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
-    let ext = extension(path);
+    let ext = extension(path).map(str::to_ascii_lowercase);
     let mut strict_candidate = false;
 
     if is_stex(data) {
@@ -347,8 +337,7 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
         }
     }
 
-    let is_atbc = data.get(..4) == Some(b"ATBC");
-    if is_atbc {
+    if data.get(..4) == Some(b"ATBC") {
         state.summary.atbc_files += 1;
         match parse_atbc(data) {
             Ok(wrapper) => {
@@ -380,7 +369,7 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
                 if !wrapper.payloads.is_empty() {
                     strict_candidate = true;
                     state.summary.wrapped_bch_files += 1;
-                    if matches!(ext, Some("bam") | Some("bam2")) {
+                    if matches!(ext.as_deref(), Some("bam") | Some("bam2")) {
                         state.summary.bam_bch_files += 1;
                     }
                 }
@@ -443,25 +432,27 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
 }
 
 fn candidate_path(path: &str) -> bool {
+    let Some(ext) = extension(path).map(str::to_ascii_lowercase) else {
+        return false;
+    };
     matches!(
-        extension(path),
-        Some(
-            "hpi"
-                | "hpb"
-                | "stex"
-                | "bch"
-                | "bcres"
-                | "bcmdl"
-                | "cmb"
-                | "ctpk"
-                | "ctxb"
-                | "bam"
-                | "bam2"
-                | "farc"
-                | "epl"
-                | "model"
-                | "bin"
-        )
+        ext.as_str(),
+        "hpi"
+            | "hpb"
+            | "stex"
+            | "bch"
+            | "bcres"
+            | "bcmdl"
+            | "cmb"
+            | "ctpk"
+            | "ctxb"
+            | "bam"
+            | "bam2"
+            | "atbc"
+            | "farc"
+            | "epl"
+            | "model"
+            | "bin"
     )
 }
 
@@ -474,6 +465,10 @@ fn extension(path: &str) -> Option<&str> {
     } else {
         Some(ext)
     }
+}
+
+fn has_extension(path: &str, expected: &str) -> bool {
+    extension(path).is_some_and(|ext| ext.eq_ignore_ascii_case(expected))
 }
 
 fn path_key(path: &str) -> String {
@@ -497,9 +492,6 @@ fn child_path(parent: &str, child: &str) -> String {
     let child = normalize_virtual_path(child).trim_start_matches('/').to_owned();
     format!("{parent}/{child}")
 }
-
-#[allow(dead_code)]
-fn _archive_error_is_send_sync(_: &ArchiveError) {}
 
 #[cfg(test)]
 mod tests {
@@ -599,7 +591,7 @@ mod tests {
             hint: eou1_hint(),
             files: BTreeMap::from([
                 (
-                    "data/pack.hpi".to_owned(),
+                    "DATA/PACK.HPI".to_owned(),
                     hpi_for_uncompressed("nested.stex", payload.len()),
                 ),
                 ("data/pack.hpb".to_owned(), payload),
@@ -642,5 +634,35 @@ mod tests {
         assert_eq!(inventory.summary.stex_files, 1);
         assert_eq!(inventory.summary.decoded_before_dedup, 0);
         assert_eq!(inventory.summary.issues, 1);
+    }
+
+    #[test]
+    fn oversized_candidate_is_reported_before_rom_reader_allocation() {
+        struct OversizedRom;
+        impl RomReader for OversizedRom {
+            fn metadata(&self) -> Result<RomMetadata, RomError> {
+                unreachable!()
+            }
+            fn identity_hint(&self) -> Result<RomIdentityHint, RomError> {
+                Ok(eou1_hint())
+            }
+            fn entries(&self) -> Result<Vec<RomEntry>, RomError> {
+                Ok(vec![RomEntry {
+                    virtual_path: "huge.bin".to_owned(),
+                    size: 100,
+                }])
+            }
+            fn read_entry(&self, _virtual_path: &str) -> Result<Vec<u8>, RomError> {
+                panic!("oversized candidate must be rejected before read_entry")
+            }
+        }
+
+        let budget = ExtractionBudget {
+            max_archive_bytes: 99,
+            ..ExtractionBudget::default()
+        };
+        let inventory = inventory_reader(&OversizedRom, budget).unwrap();
+        assert_eq!(inventory.summary.issues, 1);
+        assert_eq!(inventory.issues[0].stage, "romfs_budget");
     }
 }
