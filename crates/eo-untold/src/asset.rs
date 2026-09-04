@@ -1,5 +1,5 @@
 use crate::cityhash::cityhash64_hex;
-use eo_textures::EncodedTexture;
+use eo_textures::{EncodedTexture, NativePicaDecoder, TextureDecoder};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,8 +14,15 @@ pub struct ParityAsset {
     pub parser_used: String,
     pub category: String,
     pub material_binding_count: u64,
+    /// Virtual ROM/archive source retained only for local extraction output.
     #[serde(skip)]
-    pub(crate) internal_name: String,
+    pub source: String,
+    /// Container-provided texture name retained only for local extraction output.
+    #[serde(skip)]
+    pub internal_name: String,
+    /// Tightly packed RGBA8 pixels retained only in memory for native export.
+    #[serde(skip)]
+    pub rgba8: Vec<u8>,
     #[serde(skip)]
     pub(crate) binding_keys: BTreeSet<String>,
 }
@@ -31,6 +38,9 @@ impl ParityAsset {
         let payload = encoded
             .runtime_hash_payload()
             .expect("container adapters only publish validated base-level textures");
+        let decoded = NativePicaDecoder
+            .decode_base_level(encoded)
+            .expect("scan validates texture decoding before publishing an asset");
         Self {
             candidate_hash: cityhash64_hex(payload),
             verified_hashes: Vec::new(),
@@ -41,7 +51,9 @@ impl ParityAsset {
             parser_used: parser_used.to_owned(),
             category: category_for(&format!("{source}/{internal_name}")),
             material_binding_count: binding_keys.len() as u64,
+            source: source.to_owned(),
             internal_name: internal_name.to_owned(),
+            rgba8: decoded.rgba8,
             binding_keys,
         }
     }
@@ -74,7 +86,9 @@ impl ParityAsset {
             parser_used: parser_used.to_owned(),
             category: category.to_owned(),
             material_binding_count,
+            source: String::new(),
             internal_name: String::new(),
+            rgba8: Vec::new(),
             binding_keys,
         }
     }
@@ -136,18 +150,38 @@ fn category_for(source: &str) -> String {
     const RULES: &[(&str, &[&str])] = &[
         (
             "characters",
-            &["face", "portrait", "chara", "character", "npc", "pc_", "event/ch", "bust"],
+            &[
+                "face",
+                "portrait",
+                "chara",
+                "character",
+                "npc",
+                "pc_",
+                "event/ch",
+                "bust",
+            ],
         ),
         ("monsters", &["enemy", "monster", "ene", "foe", "boss"]),
         (
             "ui",
-            &["ui", "menu", "window", "frame", "cursor", "button", "layout"],
+            &[
+                "ui", "menu", "window", "frame", "cursor", "button", "layout",
+            ],
         ),
         ("icons", &["icon", "item", "skill", "equip", "status"]),
         ("maps", &["map", "floor", "atlas", "compass"]),
         (
             "dungeon",
-            &["dungeon", "mori", "labyrinth", "field", "wall", "ground", "floor", "bg3d"],
+            &[
+                "dungeon",
+                "mori",
+                "labyrinth",
+                "field",
+                "wall",
+                "ground",
+                "floor",
+                "bg3d",
+            ],
         ),
         (
             "backgrounds",
@@ -190,6 +224,8 @@ mod tests {
         );
         assert_eq!(asset.candidate_hash, "7ABCF0A736B8A12E");
         assert_eq!(asset.category, "ui");
+        assert_eq!(asset.source, "ui/test.stex");
+        assert_eq!(asset.rgba8.len(), 8 * 8 * 4);
     }
 
     #[test]
