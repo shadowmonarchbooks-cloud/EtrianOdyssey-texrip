@@ -116,7 +116,8 @@ mod windows_app {
             let (tx, rx) = mpsc::channel();
             self.result_rx = Some(rx);
             thread::spawn(move || {
-                let result = extract_rom_to_directory(&rom, &output).map_err(|error| error.to_string());
+                let result =
+                    extract_rom_to_directory(&rom, &output).map_err(|error| error.to_string());
                 let _ = tx.send(result);
             });
         }
@@ -128,7 +129,7 @@ mod windows_app {
             ctx.request_repaint_after(Duration::from_millis(150));
             let poll = self.result_rx.as_ref().map(Receiver::try_recv);
             match poll {
-                Some(Ok(report)) => {
+                Some(Ok(Ok(report))) => {
                     self.running = false;
                     self.result_rx = None;
                     if report.textures_written == 0 {
@@ -146,6 +147,12 @@ mod windows_app {
                         self.status_kind = StatusKind::Success;
                     }
                     self.last_report = Some(report);
+                }
+                Some(Ok(Err(error))) => {
+                    self.running = false;
+                    self.result_rx = None;
+                    self.status = format!("Extraction failed: {error}");
+                    self.status_kind = StatusKind::Error;
                 }
                 Some(Err(TryRecvError::Disconnected)) => {
                     self.running = false;
@@ -206,7 +213,10 @@ mod windows_app {
                             !self.running,
                             egui::TextEdit::singleline(&mut self.rom_path).desired_width(width),
                         );
-                        if ui.add_enabled(!self.running, egui::Button::new("Browse…")).clicked() {
+                        if ui
+                            .add_enabled(!self.running, egui::Button::new("Browse…"))
+                            .clicked()
+                        {
                             self.choose_rom();
                         }
                     });
@@ -220,7 +230,10 @@ mod windows_app {
                             !self.running,
                             egui::TextEdit::singleline(&mut self.output_path).desired_width(width),
                         );
-                        if ui.add_enabled(!self.running, egui::Button::new("Browse…")).clicked() {
+                        if ui
+                            .add_enabled(!self.running, egui::Button::new("Browse…"))
+                            .clicked()
+                        {
                             self.choose_output();
                         }
                     });
@@ -241,7 +254,10 @@ mod windows_app {
                         self.start_extraction();
                     }
                     if ui
-                        .add_enabled(!self.running && !self.output_path.trim().is_empty(), egui::Button::new("Open Output Folder"))
+                        .add_enabled(
+                            !self.running && !self.output_path.trim().is_empty(),
+                            egui::Button::new("Open Output Folder"),
+                        )
                         .clicked()
                     {
                         self.open_output();
@@ -271,11 +287,16 @@ mod windows_app {
                     if !report.issues.is_empty() {
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new("Recent warnings").strong());
-                        egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                            for issue in report.issues.iter().take(8) {
-                                ui.monospace(format!("{} · {} · {}", issue.stage, issue.source, issue.message));
-                            }
-                        });
+                        egui::ScrollArea::vertical()
+                            .max_height(150.0)
+                            .show(ui, |ui| {
+                                for issue in report.issues.iter().take(8) {
+                                    ui.monospace(format!(
+                                        "{} · {} · {}",
+                                        issue.stage, issue.source, issue.message
+                                    ));
+                                }
+                            });
                         ui.small("The full warning list is saved in extraction-report.json.");
                     }
                 }
