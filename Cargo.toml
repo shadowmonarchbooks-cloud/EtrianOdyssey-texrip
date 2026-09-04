@@ -10,7 +10,9 @@ members = [
     "crates/eo-textures",
     "crates/eo-models",
     "crates/eo-untold",
+    "crates/eo-extract",
     "crates/eo-azahar",
+    "app/desktop",
 ]
 default-members = [
     "crates/eo-core",
@@ -22,7 +24,9 @@ default-members = [
     "crates/eo-textures",
     "crates/eo-models",
     "crates/eo-untold",
+    "crates/eo-extract",
     "crates/eo-azahar",
+    "app/desktop",
 ]
 
 [workspace.package]
