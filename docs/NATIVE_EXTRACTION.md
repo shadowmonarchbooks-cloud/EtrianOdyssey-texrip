@@ -1,30 +1,21 @@
 # Native texture extraction
 
-EO-TexRip 0.60 includes a native Rust extraction path for **Etrian Odyssey Untold: The Millennium Girl** and **Etrian Odyssey 2 Untold: The Fafnir Knight**.
+EO-TexRip 0.60 is a native Rust desktop extraction path for **Etrian Odyssey Untold: The Millennium Girl** and **Etrian Odyssey 2 Untold: The Fafnir Knight**.
 
-The extractor is intended to accept a user-owned decrypted/cleartext Nintendo 3DS ROM container and write decoded texture PNGs directly. It does not require Python, pip, 3DS Texture Forge, Nintendo keys, or a legacy EO-TexRip workspace.
+The application accepts a user-owned decrypted/cleartext Nintendo 3DS ROM container and writes decoded texture PNGs directly. The Windows release candidate does not require Python, pip, Git, a Rust toolchain, or 3DS Texture Forge on the user's machine.
 
-## Current command
+## Windows desktop app
 
-From a development checkout:
+The normal 0.60 workflow is GUI-first:
 
-```powershell
-cargo run -p eo-untold --bin eo-texrip -- extract "D:\ROMs\EOU.3ds" --output "D:\Extracted\EOU"
-```
+1. Download and unzip the Windows x64 release candidate.
+2. Run `EO-TexRip.exe`.
+3. Choose a decrypted EOU1 or EO2U ROM, or drag the ROM onto the window.
+4. Choose the output folder. EO-TexRip suggests a `<rom-name>-textures` folder beside the ROM by default.
+5. Click **Extract Textures**.
+6. Review the texture count and any warnings in the app. **Open Output Folder** opens the result in Explorer.
 
-After building the binary:
-
-```powershell
-.\target\debug\eo-texrip.exe extract "D:\ROMs\EOU.3ds" --output "D:\Extracted\EOU"
-```
-
-The output directory is optional. Without it:
-
-```powershell
-.\target\debug\eo-texrip.exe extract "D:\ROMs\EOU.3ds"
-```
-
-EO-TexRip writes beside the source ROM using a directory such as `EOU-textures`.
+The extraction itself runs on a worker thread so the desktop window remains responsive while the ROM is scanned and textures are decoded.
 
 ## Output
 
@@ -60,7 +51,18 @@ The current Untold pipeline includes:
 - STEX textures;
 - CGFX/BCMDL textures, including ATBC-wrapped payloads;
 - BCH/H3D textures, including BAM/BAM2/ATBC-wrapped payloads;
-- native PICA200 decoding to tightly packed RGBA8.
+- native PICA200 decoding to tightly packed RGBA8;
+- native PNG export.
+
+## Developer CLI
+
+A small CLI remains available for automated investigation and development, but it is not the end-user workflow:
+
+```powershell
+cargo run -p eo-extract --bin eo-texrip-cli -- extract "D:\ROMs\EOU.3ds" --output "D:\Extracted\EOU"
+```
+
+End users should use `EO-TexRip.exe` from the packaged release candidate instead.
 
 ## Known boundary
 
@@ -70,4 +72,4 @@ Encrypted content is intentionally rejected rather than guessed. EO-TexRip does 
 
 ## What counts as 0.60 success
 
-For 0.60, the important test is practical: a decrypted EOU1 or EO2U ROM should produce useful PNG texture output with understandable warnings for anything not decoded. Legacy Python fingerprint equality is optional diagnostic tooling, not a user requirement and not a release gate by itself.
+For 0.60, the important test is practical: the packaged desktop app should accept a decrypted EOU1 or EO2U ROM and produce useful PNG texture output with understandable warnings for anything not decoded. Legacy Python fingerprint equality is optional diagnostic tooling, not a user requirement and not a release gate by itself.
