@@ -244,6 +244,11 @@ fn frozen_decoder_issue(issue: &ScanIssue) -> bool {
         // frozen decode_strict_file `read_error` path. HPI/HPB/FARC/EPL failures
         // are separately reported extraction diagnostics in the reference.
         "romfs_read" => !has_archive_extension(&issue.source),
+        // push_asset records raw PICA decode diagnostics for all native texture
+        // families. The frozen strict scanner counts this as a decoder issue for
+        // STEX, but CGFX/BCH per-texture decode failures remain model diagnostics
+        // unless they also cause a material-referenced texture to be missing.
+        "texture_decode" => has_extension(&issue.source, "stex"),
         // Current native decoder/model stages map to the same failure families
         // emitted by the frozen strict decoder. Exact legacy labels are also
         // accepted so this filter remains stable as diagnostics are refined.
@@ -260,21 +265,23 @@ fn frozen_decoder_issue(issue: &ScanIssue) -> bool {
         | "bch_decode_error"
         | "bch_material_parse_error"
         | "bch_material_texture_missing"
-        | "texture_decode"
         | "container_decode_error" => true,
         _ => false,
     }
 }
 
 fn has_archive_extension(source: &str) -> bool {
+    ["hpi", "hpb", "farc", "epl"]
+        .into_iter()
+        .any(|extension| has_extension(source, extension))
+}
+
+fn has_extension(source: &str, expected: &str) -> bool {
     let name = source.rsplit(['/', '\\']).next().unwrap_or(source);
     let Some((_, extension)) = name.rsplit_once('.') else {
         return false;
     };
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        "hpi" | "hpb" | "farc" | "epl"
-    )
+    extension.eq_ignore_ascii_case(expected)
 }
 
 fn increment(counts: &mut BTreeMap<String, u64>, key: String) {
@@ -350,7 +357,7 @@ mod tests {
     #[test]
     fn fingerprint_issues_exclude_archive_and_budget_diagnostics() {
         let mut inventory = inventory_with_assets(Vec::new());
-        inventory.summary.issues = 4;
+        inventory.summary.issues = 6;
         inventory.issues = vec![
             ScanIssue {
                 source: "data/pack.hpi".to_owned(),
@@ -361,6 +368,16 @@ mod tests {
                 source: "data/model.farc".to_owned(),
                 stage: "archive_budget".to_owned(),
                 message: "diagnostic".to_owned(),
+            },
+            ScanIssue {
+                source: "models/enemy.bam".to_owned(),
+                stage: "texture_decode".to_owned(),
+                message: "per-texture diagnostic".to_owned(),
+            },
+            ScanIssue {
+                source: "textures/broken.stex".to_owned(),
+                stage: "texture_decode".to_owned(),
+                message: "STEX decoder issue".to_owned(),
             },
             ScanIssue {
                 source: "models/enemy.bam".to_owned(),
@@ -375,8 +392,8 @@ mod tests {
         ];
 
         let fingerprint = build_fingerprint(&inventory);
-        assert_eq!(fingerprint.summary["issues"], 2);
-        assert_eq!(inventory.summary.issues, 4);
+        assert_eq!(fingerprint.summary["issues"], 3);
+        assert_eq!(inventory.summary.issues, 6);
     }
 
     #[test]
