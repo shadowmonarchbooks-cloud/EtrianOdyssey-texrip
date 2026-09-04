@@ -1034,7 +1034,8 @@ mod tests {
         let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
         assert_eq!(inventory.summary.hpx_pairs, 1);
         assert_eq!(inventory.summary.hpx_files, 1);
-        assert_eq!(inventory.summary.stex_files, 1);
+        // Frozen inventory_files scans both the raw RomFS HPB and the extracted HPX roots.
+        assert_eq!(inventory.summary.stex_files, 2);
         assert_eq!(inventory.summary.strict_candidate_files, 1);
         assert_eq!(inventory.summary.decoded_before_dedup, 1);
         assert_eq!(inventory.extraction_usage.members, 1);
