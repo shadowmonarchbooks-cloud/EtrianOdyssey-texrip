@@ -1,4 +1,4 @@
-use crate::{ParityAsset, UntoldInventory};
+use crate::{ParityAsset, ScanIssue, UntoldInventory};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -122,6 +122,16 @@ pub fn build_fingerprint(inventory: &UntoldInventory) -> StructuralFingerprint {
         increment(&mut category_counts, asset.category.clone());
     }
 
+    // The frozen run_summary `issues` field is the count returned by
+    // decode_strict_file. Archive extraction, native safety budgets, and probe
+    // diagnostics are useful to expose to callers, but they are separate report
+    // channels in the reference pipeline and must not inflate schema-1 parity.
+    let mut summary = inventory.summary.as_fingerprint_map();
+    summary.insert(
+        "issues".to_owned(),
+        frozen_decoder_issue_count(&inventory.issues),
+    );
+
     StructuralFingerprint {
         schema_version: FINGERPRINT_SCHEMA,
         kind: FINGERPRINT_KIND.to_owned(),
@@ -150,7 +160,7 @@ pub fn build_fingerprint(inventory: &UntoldInventory) -> StructuralFingerprint {
             .iter()
             .filter(|asset| asset.material_binding_count > 0)
             .count(),
-        summary: inventory.summary.as_fingerprint_map(),
+        summary,
         materials: inventory.material_summary.as_fingerprint_map(),
         models: BTreeMap::from([
             ("payloads".to_owned(), inventory.model_payloads),
@@ -221,6 +231,52 @@ pub fn compare_fingerprints(
     }
 }
 
+fn frozen_decoder_issue_count(issues: &[ScanIssue]) -> u64 {
+    issues
+        .iter()
+        .filter(|issue| frozen_decoder_issue(issue))
+        .count() as u64
+}
+
+fn frozen_decoder_issue(issue: &ScanIssue) -> bool {
+    match issue.stage.as_str() {
+        // Full-file read failures of non-archive candidates correspond to the
+        // frozen decode_strict_file `read_error` path. HPI/HPB/FARC/EPL failures
+        // are separately reported extraction diagnostics in the reference.
+        "romfs_read" => !has_archive_extension(&issue.source),
+        // Current native decoder/model stages map to the same failure families
+        // emitted by the frozen strict decoder. Exact legacy labels are also
+        // accepted so this filter remains stable as diagnostics are refined.
+        "stex"
+        | "stex_decode"
+        | "stex_decode_error"
+        | "cgfx"
+        | "cgfx_model"
+        | "cgfx_decode_error"
+        | "cgfx_material_parse_error"
+        | "cgfx_material_texture_missing"
+        | "bch"
+        | "bch_model"
+        | "bch_decode_error"
+        | "bch_material_parse_error"
+        | "bch_material_texture_missing"
+        | "texture_decode"
+        | "container_decode_error" => true,
+        _ => false,
+    }
+}
+
+fn has_archive_extension(source: &str) -> bool {
+    let name = source.rsplit(['/', '\\']).next().unwrap_or(source);
+    let Some((_, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "hpi" | "hpb" | "farc" | "epl"
+    )
+}
+
 fn increment(counts: &mut BTreeMap<String, u64>, key: String) {
     *counts.entry(key).or_default() += 1;
 }
@@ -289,6 +345,38 @@ mod tests {
         assert_eq!(forward.title_id, "00040000000EC700");
         assert_eq!(forward.materials["material_texture_bindings"], 2);
         assert_eq!(forward.privacy, PrivacyStatement::default());
+    }
+
+    #[test]
+    fn fingerprint_issues_exclude_archive_and_budget_diagnostics() {
+        let mut inventory = inventory_with_assets(Vec::new());
+        inventory.summary.issues = 4;
+        inventory.issues = vec![
+            ScanIssue {
+                source: "data/pack.hpi".to_owned(),
+                stage: "hpi_hpb_member".to_owned(),
+                message: "diagnostic".to_owned(),
+            },
+            ScanIssue {
+                source: "data/model.farc".to_owned(),
+                stage: "archive_budget".to_owned(),
+                message: "diagnostic".to_owned(),
+            },
+            ScanIssue {
+                source: "models/enemy.bam".to_owned(),
+                stage: "cgfx_model".to_owned(),
+                message: "decoder issue".to_owned(),
+            },
+            ScanIssue {
+                source: "textures/ui.stex".to_owned(),
+                stage: "stex".to_owned(),
+                message: "decoder issue".to_owned(),
+            },
+        ];
+
+        let fingerprint = build_fingerprint(&inventory);
+        assert_eq!(fingerprint.summary["issues"], 2);
+        assert_eq!(inventory.summary.issues, 4);
     }
 
     #[test]
