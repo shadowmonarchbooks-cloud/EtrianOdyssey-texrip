@@ -30,6 +30,7 @@ fn inspect_cgfx_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
     let payload = data
         .get(..declared_size)
         .ok_or(ModelError::InvalidOffset)?;
+    let model_count = u32::from(find_magic(payload, b"CMDL").is_some());
     let model_name = first_cmdl_name(payload);
     let mut materials = Vec::new();
     let mut search = 0usize;
@@ -84,6 +85,7 @@ fn inspect_cgfx_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
     }
 
     Ok(ModelInventory {
+        model_count,
         model_name,
         materials,
     })
@@ -251,6 +253,7 @@ mod tests {
     fn direct_cgfx_material_bindings_are_structural() {
         let data = synthetic_cgfx();
         let inventory = CgfxModelInspector.inspect(&data).unwrap();
+        assert_eq!(inventory.model_count, 1);
         assert_eq!(inventory.model_name.as_deref(), Some("enemy_model"));
         assert_eq!(inventory.materials.len(), 1);
         let material = &inventory.materials[0];
@@ -272,6 +275,7 @@ mod tests {
         let inspector = CgfxModelInspector;
         assert!(inspector.probe(&atbc));
         let inventory = inspector.inspect(&atbc).unwrap();
+        assert_eq!(inventory.model_count, 1);
         assert_eq!(inventory.materials[0].textures[0].internal_name, "body_tex");
     }
 
