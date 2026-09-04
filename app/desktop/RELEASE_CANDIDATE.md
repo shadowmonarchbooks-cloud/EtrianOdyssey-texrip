@@ -6,10 +6,21 @@ This is the first Windows desktop release candidate for the native Rust extracto
 
 - Opens user-owned decrypted/cleartext Etrian Odyssey Untold or Etrian Odyssey 2 Untold ROMs.
 - Lets you choose the ROM and output folder from a desktop GUI; ROM files can also be dragged onto the window.
+- Keeps the GUI responsive while extraction runs in the background.
 - Uses the native Rust NCSD/CIA/NCCH/RomFS, archive, container, and PICA200 paths.
 - Writes decoded textures as ordinary PNG files arranged in coarse category folders.
+- Shows the extracted texture count and warnings after completion and can open the output folder in Explorer.
 - Writes `extraction-report.json` with extraction details and warnings.
-- Requires no Python, pip, Rust toolchain, Git, or 3DS Texture Forge on the end-user machine.
+- Requires no Python, pip, Git, Rust toolchain, or 3DS Texture Forge on the end-user machine.
+
+## How to use it
+
+1. Unzip the release archive.
+2. Run `EO-TexRip.exe`.
+3. Browse for a decrypted EOU1 or EO2U ROM, or drag the ROM onto the app window.
+4. Choose the output folder or keep the suggested folder beside the ROM.
+5. Click **Extract Textures**.
+6. Use **Open Output Folder** when extraction finishes.
 
 ## Current boundaries
 
