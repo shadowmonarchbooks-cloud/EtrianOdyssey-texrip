@@ -9,6 +9,7 @@ members = [
     "crates/eo-archives",
     "crates/eo-textures",
     "crates/eo-models",
+    "crates/eo-untold",
     "crates/eo-azahar",
 ]
 default-members = [
@@ -20,11 +21,12 @@ default-members = [
     "crates/eo-archives",
     "crates/eo-textures",
     "crates/eo-models",
+    "crates/eo-untold",
     "crates/eo-azahar",
 ]
 
 [workspace.package]
-version = "0.50.0"
+version = "0.60.0"
 edition = "2021"
 rust-version = "1.82"
 authors = ["EO-TexRip contributors"]
