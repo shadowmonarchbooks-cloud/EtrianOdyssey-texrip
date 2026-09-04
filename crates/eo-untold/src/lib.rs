@@ -344,9 +344,6 @@ fn scan_hpi_pair(hpi: &VirtualFile, hpb: &VirtualFile, depth: u16, state: &mut S
 fn scan_single_file(file: VirtualFile, depth: u16, state: &mut ScanState) {
     let farc = FarcParser;
     if farc.probe(&file.data) {
-        // The frozen strict selector recognizes FARC magic as a candidate even
-        // though the archive is then expanded before texture decoding.
-        state.summary.strict_candidate_files += 1;
         state.summary.farc_archives += 1;
         scan_single_archive(file, depth, state, ArchiveFlavor::Farc);
         return;
