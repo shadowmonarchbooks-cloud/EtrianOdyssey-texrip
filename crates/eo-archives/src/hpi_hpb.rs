@@ -1,7 +1,7 @@
 use crate::bytes::{ByteRange, ByteReader};
 use crate::{
-    enforce_archive_budget, enforce_inventory_budget, ArchiveError, ArchiveInventory, ArchiveKind,
-    ArchiveMember, ExtractionBudget,
+    enforce_archive_budget, ArchiveError, ArchiveInventory, ArchiveKind, ArchiveMember,
+    ExtractionBudget,
 };
 use encoding_rs::SHIFT_JIS;
 
@@ -72,7 +72,7 @@ impl HpiHpbParser {
             });
         }
 
-        enforce_inventory_budget(&members, budget)?;
+        enforce_hpi_inventory_budget(&members, budget)?;
         Ok(ArchiveInventory {
             kind: ArchiveKind::HpiHpb,
             members,
@@ -178,6 +178,44 @@ fn parse_hpi(hpi: &[u8], budget: ExtractionBudget) -> Result<Vec<HpiEntry>, Arch
         });
     }
     Ok(entries)
+}
+
+fn enforce_hpi_inventory_budget(
+    members: &[ArchiveMember],
+    budget: ExtractionBudget,
+) -> Result<(), ArchiveError> {
+    let count = members.len() as u64;
+    if count > budget.max_members {
+        return Err(ArchiveError::BudgetExceeded(format!(
+            "member count {count} exceeds {}",
+            budget.max_members
+        )));
+    }
+
+    let mut total_expanded = 0u64;
+    for member in members {
+        let expanded = member.expanded_size.unwrap_or(member.stored_size);
+        // For compressed HPX members the HPB compressed span is already covered by
+        // max_archive_bytes and is read as a borrowed slice. max_member_bytes
+        // protects the actual output allocation, whose authoritative size is the
+        // ACMP decompressed-size field. Uncompressed entries have expanded == stored.
+        if expanded > budget.max_member_bytes {
+            return Err(ArchiveError::BudgetExceeded(format!(
+                "member {} size exceeds {}",
+                member.index, budget.max_member_bytes
+            )));
+        }
+        total_expanded = total_expanded
+            .checked_add(expanded)
+            .ok_or_else(|| ArchiveError::BudgetExceeded("expanded byte count overflow".to_owned()))?;
+        if total_expanded > budget.max_expanded_bytes {
+            return Err(ArchiveError::BudgetExceeded(format!(
+                "expanded bytes {total_expanded} exceed {}",
+                budget.max_expanded_bytes
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn decode_hpi_name(names: &[u8], offset: u64) -> Result<String, ArchiveError> {
