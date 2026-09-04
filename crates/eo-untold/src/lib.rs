@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
+const ROMFS_PROBE_BYTES: usize = 0x10_0000;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanIssue {
     pub source: String,
@@ -204,7 +206,22 @@ pub fn inventory_reader<R: RomReader>(
     let mut state = ScanState::new(budget);
     let mut files = Vec::new();
     for entry in &entries {
-        if !candidate_path(&entry.virtual_path) {
+        let selected = if candidate_path(&entry.virtual_path) {
+            true
+        } else if entry.size == 0 {
+            false
+        } else {
+            let probe_len = usize::try_from(entry.size.min(ROMFS_PROBE_BYTES as u64))
+                .unwrap_or(ROMFS_PROBE_BYTES);
+            match reader.read_entry_prefix(&entry.virtual_path, probe_len) {
+                Ok(probe) => romfs_probe_candidate(&probe),
+                Err(error) => {
+                    state.issue(&entry.virtual_path, "romfs_probe", error);
+                    continue;
+                }
+            }
+        };
+        if !selected {
             continue;
         }
         if entry.size > budget.max_archive_bytes {
@@ -673,12 +690,31 @@ fn candidate_path(path: &str) -> bool {
             | "ctxb"
             | "bam"
             | "bam2"
-            | "atbc"
             | "farc"
             | "epl"
-            | "model"
-            | "bin"
     )
+}
+
+fn romfs_probe_candidate(probe: &[u8]) -> bool {
+    if matches!(
+        probe.get(..4),
+        Some(b"STEX")
+            | Some(b"BCH\0")
+            | Some(b"CGFX")
+            | Some(b"ATBC")
+            | Some(b"CTPK")
+            | Some(b"CTXB")
+            | Some(b"ctxb")
+            | Some(b"cmb ")
+            | Some(b"FARC")
+    ) {
+        return true;
+    }
+    contains_magic(probe, b"BCH\0")
+}
+
+fn contains_magic(data: &[u8], magic: &[u8]) -> bool {
+    !magic.is_empty() && data.windows(magic.len()).any(|window| window == magic)
 }
 
 fn extension(path: &str) -> Option<&str> {
@@ -815,6 +851,31 @@ mod tests {
     }
 
     #[test]
+    fn extensionless_stex_is_selected_by_romfs_probe() {
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("tex/opaque_resource".to_owned(), stex_a8(0x12))]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.strict_candidate_files, 1);
+        assert_eq!(inventory.summary.stex_files, 1);
+        assert_eq!(inventory.assets.len(), 1);
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
+    fn unrelated_bin_is_not_selected_by_extension_alone() {
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("misc/random.bin".to_owned(), vec![0u8; 64])]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.strict_candidate_files, 0);
+        assert!(inventory.assets.is_empty());
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
     fn duplicate_encoded_assets_use_legacy_dedupe_identity() {
         let rom = FakeRom {
             hint: eou1_hint(),
@@ -909,7 +970,7 @@ mod tests {
             }
             fn entries(&self) -> Result<Vec<RomEntry>, RomError> {
                 Ok(vec![RomEntry {
-                    virtual_path: "huge.bin".to_owned(),
+                    virtual_path: "huge.stex".to_owned(),
                     size: 100,
                 }])
             }
