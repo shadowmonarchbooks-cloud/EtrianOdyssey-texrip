@@ -25,8 +25,8 @@ use eo_models::{BchModelInspector, CgfxModelInspector, ModelInspector, ModelInve
 use eo_profiles::detect_verified_profile;
 use eo_rom::{RomError, RomReader};
 use eo_textures::{
-    bch::{parse_bch, parse_bch_wrapper, BchContainer},
-    cgfx::{is_cgfx, parse_atbc, parse_cgfx, CgfxContainer},
+    bch::{parse_bch, parse_header as parse_bch_header, BchContainer},
+    cgfx::{parse_cgfx, CgfxContainer},
     stex::{is_stex, parse_stex},
     EncodedTexture, NativePicaDecoder, TextureDecoder,
 };
@@ -36,6 +36,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 const ROMFS_PROBE_BYTES: usize = 0x10_0000;
+const INVENTORY_PROBE_BYTES: usize = 0x2_0000;
+const WRAPPED_BCH_PROBE_BYTES: usize = 0x1_0000;
+const MAX_EMBEDDED_CGFX: usize = 16;
+const MAX_EMBEDDED_BCH: usize = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanIssue {
@@ -280,6 +284,15 @@ pub fn inventory_reader<R: RomReader>(
 }
 
 fn scan_file_set(files: Vec<VirtualFile>, depth: u16, state: &mut ScanState) {
+    for file in &files {
+        inventory_file(file, state);
+        if !matches!(extension(&file.path).map(str::to_ascii_lowercase).as_deref(), Some("hpi") | Some("hpb"))
+            && strict_texture_signature(&file.path, prefix(&file.data, ROMFS_PROBE_BYTES))
+        {
+            state.summary.strict_candidate_files += 1;
+        }
+    }
+
     let mut by_path = BTreeMap::new();
     for (index, file) in files.iter().enumerate() {
         by_path.entry(path_key(&file.path)).or_insert(index);
@@ -304,6 +317,28 @@ fn scan_file_set(files: Vec<VirtualFile>, depth: u16, state: &mut ScanState) {
             continue;
         }
         scan_single_file(file, depth, state);
+    }
+}
+
+fn inventory_file(file: &VirtualFile, state: &mut ScanState) {
+    let probe = prefix(&file.data, INVENTORY_PROBE_BYTES);
+    let ext = extension(&file.path).map(str::to_ascii_lowercase);
+    let has_bch = contains_magic(probe, b"BCH\0");
+
+    if probe.get(..4) == Some(b"STEX") {
+        state.summary.stex_files += 1;
+    }
+    if probe.get(..4) == Some(b"ATBC") {
+        state.summary.atbc_files += 1;
+    }
+    if has_cgfx_probe(probe) {
+        state.summary.cgfx_files += 1;
+    }
+    if has_bch && probe.get(..4) != Some(b"BCH\0") {
+        state.summary.wrapped_bch_files += 1;
+    }
+    if has_bch && matches!(ext.as_deref(), Some("bam") | Some("bam2")) {
+        state.summary.bam_bch_files += 1;
     }
 }
 
@@ -410,12 +445,7 @@ fn scan_single_archive(file: VirtualFile, depth: u16, state: &mut ScanState, fla
 }
 
 fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
-    let ext = extension(path).map(str::to_ascii_lowercase);
-    let mut strict_candidate = false;
-
     if is_stex(data) {
-        strict_candidate = true;
-        state.summary.stex_files += 1;
         match parse_stex(data) {
             Ok(texture) => push_asset(
                 path,
@@ -428,84 +458,45 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
             ),
             Err(error) => state.issue(path, "stex", error),
         }
+        return;
     }
 
-    if is_cgfx(data) {
-        strict_candidate = true;
-        state.summary.cgfx_files += 1;
-        scan_cgfx_payload(path, data, 0, state);
+    let before_assets = state.assets.len();
+    for (offset, size) in cgfx_payload_extents(data) {
+        let Some(end) = offset.checked_add(size) else {
+            state.issue(path, "cgfx_bounds", "embedded CGFX extent overflow");
+            continue;
+        };
+        let Some(bytes) = data.get(offset..end) else {
+            state.issue(path, "cgfx_bounds", "embedded CGFX extent is invalid");
+            continue;
+        };
+        scan_cgfx_payload(path, bytes, offset as u64, state);
     }
 
-    if data.get(..4) == Some(b"ATBC") {
-        state.summary.atbc_files += 1;
-        match parse_atbc(data) {
-            Ok(wrapper) => {
-                if !wrapper.cgfx_payloads.is_empty() {
-                    strict_candidate = true;
-                }
-                for payload in wrapper.cgfx_payloads {
-                    let start = payload.offset as usize;
-                    let Some(end) = start.checked_add(payload.size as usize) else {
-                        state.issue(path, "atbc_cgfx_bounds", "embedded CGFX extent overflow");
-                        continue;
-                    };
-                    let Some(bytes) = data.get(start..end) else {
-                        state.issue(path, "atbc_cgfx_bounds", "embedded CGFX extent is invalid");
-                        continue;
-                    };
-                    scan_cgfx_payload(path, bytes, payload.offset, state);
-                }
-            }
-            Err(error) => state.issue(path, "atbc", error),
-        }
+    let bam2 = matches!(
+        extension(path).map(str::to_ascii_lowercase).as_deref(),
+        Some("bam") | Some("bam2")
+    );
+    for offset in embedded_bch_offsets(data) {
+        let Some(bytes) = data.get(offset..) else {
+            state.issue(path, "bch_bounds", "embedded BCH offset is invalid");
+            continue;
+        };
+        scan_bch_payload(path, bytes, offset as u64, bam2, state);
     }
 
-    if matches!(data.get(..4), Some(b"ATBC") | Some(b"BAM2")) {
-        match parse_bch_wrapper(data) {
-            Ok(wrapper) => {
-                if !wrapper.payloads.is_empty() {
-                    strict_candidate = true;
-                    state.summary.wrapped_bch_files += 1;
-                    if matches!(ext.as_deref(), Some("bam") | Some("bam2")) {
-                        state.summary.bam_bch_files += 1;
-                    }
-                }
-                for payload in wrapper.payloads {
-                    let start = payload.offset as usize;
-                    let Some(bytes) = data.get(start..) else {
-                        state.issue(path, "wrapped_bch_bounds", "embedded BCH offset is invalid");
-                        continue;
-                    };
-                    scan_bch_payload(
-                        path,
-                        bytes,
-                        payload.offset,
-                        matches!(ext.as_deref(), Some("bam") | Some("bam2")),
-                        state,
-                    );
-                }
-            }
-            Err(error) => state.issue(path, "bch_wrapper", error),
-        }
-    } else if data.get(..4) == Some(b"BCH\0") {
-        strict_candidate = true;
-        scan_bch_payload(path, data, 0, false, state);
-    }
-
-    if matches!(
-        data.get(..4),
-        Some(b"CTPK") | Some(b"CTXB") | Some(b"ctxb") | Some(b"cmb ")
-    ) {
-        strict_candidate = true;
+    if state.assets.len() == before_assets
+        && matches!(
+            data.get(..4),
+            Some(b"CTPK") | Some(b"CTXB") | Some(b"ctxb") | Some(b"cmb ")
+        )
+    {
         state.issue(
             path,
             "unsupported_parity_container",
             "legacy reference recognizes this container but native parity support is not implemented yet",
         );
-    }
-
-    if strict_candidate {
-        state.summary.strict_candidate_files += 1;
     }
 }
 
@@ -714,11 +705,143 @@ fn romfs_probe_candidate(probe: &[u8]) -> bool {
     ) {
         return true;
     }
-    contains_magic(probe, b"BCH\0")
+    contains_magic(probe, b"BCH\0") || has_cgfx_probe(prefix(probe, INVENTORY_PROBE_BYTES))
+}
+
+fn strict_texture_signature(path: &str, probe: &[u8]) -> bool {
+    if is_stex(probe) {
+        return true;
+    }
+    match probe.get(..4) {
+        Some(b"ATBC") => {
+            return has_cgfx_probe(probe) || contains_magic(probe, b"BCH\0");
+        }
+        Some(b"BCH\0")
+        | Some(b"CGFX")
+        | Some(b"CTPK")
+        | Some(b"CTXB")
+        | Some(b"ctxb")
+        | Some(b"cmb ") => return true,
+        _ => {}
+    }
+
+    let ext = extension(path).map(str::to_ascii_lowercase);
+    let extension_qualified = matches!(
+        ext.as_deref(),
+        Some("bam")
+            | Some("bam2")
+            | Some("bch")
+            | Some("bcres")
+            | Some("bcmdl")
+            | Some("cmb")
+            | Some("model")
+            | Some("bin")
+            | Some("stex")
+            | Some("ctpk")
+            | Some("ctxb")
+    );
+    if extension_qualified
+        && contains_magic(prefix(probe, INVENTORY_PROBE_BYTES), b"BCH\0")
+    {
+        return true;
+    }
+    contains_magic(prefix(probe, WRAPPED_BCH_PROBE_BYTES), b"BCH\0")
+}
+
+fn cgfx_payload_extents(data: &[u8]) -> Vec<(usize, usize)> {
+    let mut payloads = Vec::new();
+    let mut search = 0usize;
+    while search + 4 <= data.len() && payloads.len() < MAX_EMBEDDED_CGFX {
+        let Some(relative) = find_magic(&data[search..], b"CGFX") else {
+            break;
+        };
+        let offset = search + relative;
+        search = offset.saturating_add(4);
+        let Some(size) = cgfx_declared_size(data, offset, false) else {
+            continue;
+        };
+        payloads.push((offset, size));
+    }
+    payloads
+}
+
+fn has_cgfx_probe(data: &[u8]) -> bool {
+    let mut search = 0usize;
+    let mut found = 0usize;
+    while search + 4 <= data.len() && found < MAX_EMBEDDED_CGFX {
+        let Some(relative) = find_magic(&data[search..], b"CGFX") else {
+            break;
+        };
+        let offset = search + relative;
+        search = offset.saturating_add(4);
+        found += 1;
+        if cgfx_declared_size(data, offset, true).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+fn cgfx_declared_size(data: &[u8], offset: usize, allow_truncated: bool) -> Option<usize> {
+    let header_end = offset.checked_add(0x14)?;
+    if header_end > data.len() || data.get(offset..offset + 4) != Some(b"CGFX") {
+        return None;
+    }
+    if data.get(offset + 4..offset + 6) != Some(&[0xff, 0xfe]) {
+        return None;
+    }
+    let header_size = read_u16_le(data, offset + 6)?;
+    let declared = usize::try_from(read_u32_le(data, offset + 0x0c)?).ok()?;
+    if header_size < 0x14 || declared < 0x20 {
+        return None;
+    }
+    if !allow_truncated && offset.checked_add(declared)? > data.len() {
+        return None;
+    }
+    Some(declared)
+}
+
+fn embedded_bch_offsets(data: &[u8]) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut search = 0usize;
+    while search + 4 <= data.len() && offsets.len() < MAX_EMBEDDED_BCH {
+        let Some(relative) = find_magic(&data[search..], b"BCH\0") else {
+            break;
+        };
+        let offset = search + relative;
+        search = offset.saturating_add(4);
+        if parse_bch_header(&data[offset..]).is_ok() {
+            offsets.push(offset);
+        }
+    }
+    offsets
+}
+
+fn prefix(data: &[u8], limit: usize) -> &[u8] {
+    &data[..data.len().min(limit)]
+}
+
+fn find_magic(data: &[u8], magic: &[u8]) -> Option<usize> {
+    if magic.is_empty() {
+        return None;
+    }
+    data.windows(magic.len()).position(|window| window == magic)
 }
 
 fn contains_magic(data: &[u8], magic: &[u8]) -> bool {
-    !magic.is_empty() && data.windows(magic.len()).any(|window| window == magic)
+    find_magic(data, magic).is_some()
+}
+
+fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset.checked_add(2)?)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u16::from_le_bytes)
+}
+
+fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
+    data.get(offset..offset.checked_add(4)?)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u32::from_le_bytes)
 }
 
 fn extension(path: &str) -> Option<&str> {
@@ -912,6 +1035,7 @@ mod tests {
         assert_eq!(inventory.summary.hpx_pairs, 1);
         assert_eq!(inventory.summary.hpx_files, 1);
         assert_eq!(inventory.summary.stex_files, 1);
+        assert_eq!(inventory.summary.strict_candidate_files, 1);
         assert_eq!(inventory.summary.decoded_before_dedup, 1);
         assert_eq!(inventory.extraction_usage.members, 1);
         assert_eq!(inventory.assets.len(), 1);
