@@ -1,8 +1,8 @@
 # 0.60 Untold Native Extraction
 
-0.60 composes the native Rust ROM, archive, texture, and model layers into the first usable end-to-end Etrian Odyssey Untold / Etrian Odyssey 2 Untold extractor. The product goal is straightforward: give EO-TexRip a supported decrypted ROM and get usable decoded texture files back without Python or 3DS Texture Forge.
+0.60 composes the native Rust ROM, archive, texture, and model layers into the first end-to-end Etrian Odyssey Untold / Etrian Odyssey 2 Untold extraction path and packages that path as a Windows desktop application.
 
-The frozen Python 0.13 implementation remains available as optional regression evidence. Exact fingerprint equality is **not** a 0.60 release blocker. Native behavior should be driven by format correctness, real extraction results, and bounded synthetic tests rather than reproducing legacy quirks.
+The product gate is practical native extraction: a user-owned decrypted/cleartext EOU1 or EO2U ROM should produce useful PNG texture output through the GUI without Python or 3DS Texture Forge. The frozen Python 0.13 implementation and schema-1 fingerprints remain optional developer regression tools; exact legacy equality is not a release gate.
 
 ## Exit criteria
 
@@ -13,73 +13,50 @@ The frozen Python 0.13 implementation remains available as optional regression e
 - [x] Enumerate candidate RomFS files through the native `RomReader` contract.
 - [x] Reject oversized candidate reads before requesting their payload bytes.
 - [x] Pair HPI/HPB paths case-insensitively without relying on host filesystem behavior.
-- [x] Expand HPI/HPB, FARC, and EPL archives through bounded native parsers.
-- [x] Keep archive discovery counters separate from strict texture/model candidates.
-- [x] Keep Nintendo keys, ROM bytes, firmware, and proprietary game assets out of the repository.
+- [x] Expand HPI/HPB, FARC, and EPL through bounded native archive stages.
+- [x] Keep extracted proprietary bytes out of committed artifacts.
 
 ### Native texture and model path
 
 - [x] Route STEX through the native STEX adapter and native PICA decoder.
 - [x] Route direct and ATBC-wrapped CGFX through native texture and material inspection.
 - [x] Route direct and BAM/ATBC-wrapped BCH through native texture and material inspection.
-- [x] Deduplicate decoded assets by `(candidate_hash, format, width, height)`.
+- [x] Deduplicate decoded assets by stable encoded-texture identity.
 - [x] Merge material bindings through structural texture-name relationships rather than image heuristics.
-- [x] Expose structural model and material relationships for CGFX and BCH/H3D.
-- [x] Surface known but unsupported CTPK/CTXB/CMB candidates explicitly instead of silently claiming support.
+- [x] Surface known CTPK/CTXB/CMB candidates as explicit unsupported-container warnings instead of silently claiming support.
+- [x] Carry decoded RGBA8 through the native pipeline for export.
 
-### User-facing native extraction
+### User-facing extraction
 
-- [x] Retain successfully decoded RGBA8 pixels for native output rather than discarding them after validation.
-- [x] Add `eo-texrip extract <decrypted-rom> [-o|--output <directory>]`.
-- [x] Write decoded textures as ordinary RGBA PNG files with no Python or external image tool dependency.
-- [x] Use deterministic Windows-safe filenames and coarse category directories.
-- [x] Preserve internal texture names when available and fall back to source-derived names when they are not.
-- [x] Write `extraction-report.json` with game identity, output mapping, parser provenance, dimensions, hashes, material-binding counts, and warnings.
-- [x] Keep unsupported-container/decode failures visible in the report instead of dropping them silently.
-- [ ] Smoke-test the native extractor against a user-owned decrypted EOU1 ROM and inspect the produced PNG set.
-- [ ] Smoke-test the native extractor against a user-owned decrypted EO2U ROM and inspect the produced PNG set.
-- [ ] Implement any additional container support only when a real extraction shows that missing support is preventing textures from being recovered.
+- [x] Add a reusable Rust extraction/export API separate from the GUI and developer CLI.
+- [x] Write decoded textures as ordinary RGBA PNG files without Python or an external image tool.
+- [x] Use deterministic Windows-safe filenames and coarse category folders.
+- [x] Write `extraction-report.json` with output mappings and extraction warnings.
+- [x] Add a Windows desktop GUI with ROM picker, output-folder picker, drag-and-drop input, extraction status, warning summary, and output-folder action.
+- [x] Run extraction off the GUI thread so the window remains responsive.
+- [x] Add a Windows x64 release-candidate packaging workflow producing `EO-TexRip.exe`, a ZIP archive, and SHA-256 checksum.
 
-### Optional regression tooling
+### Practical 0.60 gate
 
-- [x] Port the CityHash64 variant used by the legacy/Azahar candidate-hash path.
-- [x] Emit privacy-safe schema-1 structural fingerprints.
-- [x] Keep the native fingerprint comparison CLI available for developer diagnostics.
-- [x] Preserve the frozen Python regression suite in CI while the old implementation remains in the repository.
-
-Fingerprint mismatches may be useful debugging signals, but they do not override a correct native extraction result and they do not gate 0.60 by themselves.
+- [ ] Publish the Windows `0.60.0-rc.1` prerelease from a green exact head.
+- [ ] Smoke-test the packaged RC with a user-owned decrypted EOU1 ROM and inspect PNG output/report.
+- [ ] Smoke-test the packaged RC with a user-owned decrypted EO2U ROM and inspect PNG output/report.
+- [ ] Implement CTPK/CTXB/CMB or another format only if a real extraction report shows it is preventing useful Untold textures from being recovered.
 
 ### Quality and legal boundary
 
 - [ ] Pass Rust formatting, Clippy with warnings denied, and the full workspace tests on Ubuntu and Windows at the final 0.60 head.
-- [ ] Keep the frozen Python regression matrix green on Ubuntu/Windows and Python 3.10/3.12 at the final 0.60 head.
+- [ ] Build and package the Windows desktop executable successfully in CI.
+- [ ] Keep the frozen Python regression matrix green while the legacy implementation remains in the repository.
 - [x] Use synthetic fixtures only in the repository.
-- [x] Do not add Nintendo keys, ROM data, firmware, decoded game images, local source paths, or proprietary model/texture names to committed test evidence.
+- [x] Do not add Nintendo keys, ROM data, firmware, decoded game images, local source paths, or proprietary model/texture fixtures to committed evidence.
 
-## Native extraction workflow
+## Optional legacy regression tooling
 
-During development, the extractor can be run directly from the workspace:
+The native fingerprint CLI and frozen Python schema-1 fingerprint remain available for developer investigation. They can help explain regressions but do not define correctness when the native implementation intentionally improves on legacy behavior.
 
-```text
-cargo run -p eo-untold --bin eo-texrip -- extract <decrypted-rom> --output <directory>
-```
-
-After building the binary, the user-facing form is:
-
-```text
-eo-texrip.exe extract <decrypted-rom> --output <directory>
-```
-
-If `--output` is omitted, EO-TexRip creates `<rom-name>-textures` beside the ROM. The output contains category folders of PNG files plus `extraction-report.json`.
-
-See `docs/NATIVE_EXTRACTION.md` for the current usage and supported-input boundary.
-
-## Remaining verification boundary
-
-The remaining 0.60 verification is practical extraction, not legacy fingerprint equality. EOU1 and EO2U should each be run through the native extractor using user-owned decrypted inputs, the produced PNGs should be inspectable, and any warnings that correspond to genuinely missing textures should drive the next parser work.
-
-CTPK, CTXB, and CMB remain intentionally unsupported until real extraction evidence shows they are needed for one of the Untold games. Their magic or filename extensions alone are not sufficient reason to add speculative parsers.
+No user needs to create Python workspaces or fingerprint JSON files to use the desktop application.
 
 ## 0.60 rule
 
-Prefer correct, bounded native extraction over behavioral imitation of the legacy app. Do not tune parsers to opaque expected numbers. Every format change must be explained by file structure or a reproducible extraction failure and must receive synthetic regression coverage. Unknown data stays unknown until there is enough evidence to support it safely.
+Prioritize correct native extraction and useful user-facing output over reproducing legacy quirks. Keep unknown or unsupported binary structures explicit, add parsers only from structural evidence, and never ship or acquire Nintendo keys or proprietary game data.
