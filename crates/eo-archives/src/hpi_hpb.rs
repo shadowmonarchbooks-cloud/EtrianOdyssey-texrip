@@ -40,17 +40,25 @@ impl HpiHpbParser {
         let mut members = Vec::with_capacity(entries.len());
 
         for entry in entries {
-            if entry.declared_decompressed_size > budget.max_member_bytes {
-                return Err(ArchiveError::BudgetExceeded(format!(
-                    "member {} declared output {} exceeds {}",
-                    entry.index, entry.declared_decompressed_size, budget.max_member_bytes
-                )));
+            // Frozen unpack_hpi_pair() silently skips an entry whose start is at
+            // or beyond HPB EOF. Preserve that distinction from an entry that
+            // starts in-bounds but declares an invalid extent, which is fatal.
+            if entry.file_offset >= hpb_reader.len() {
+                continue;
             }
 
             let (stored_size, expanded_size) = if entry.declared_decompressed_size == 0 {
                 ByteRange::new(entry.file_offset, entry.compressed_size, hpb_reader.len())?;
                 (entry.compressed_size, entry.compressed_size)
             } else {
+                // The HPI decompressed-size field is only the compressed/uncompressed
+                // discriminator in the frozen implementation. The authoritative
+                // output size is the ACMP header at the HPB offset. A compressed
+                // tail shorter than that header is skipped before any size check.
+                let available = hpb_reader.len().saturating_sub(entry.file_offset);
+                if available < ACMP_MIN_HEADER_SIZE {
+                    continue;
+                }
                 let block = inspect_compressed_block(hpb, entry.file_offset, budget)?;
                 (block.total_size, block.decompressed_size)
             };
@@ -411,6 +419,41 @@ mod tests {
                 .unwrap(),
             vec![1, 2, 3, 4]
         );
+    }
+
+    #[test]
+    fn entry_start_at_hpb_eof_is_skipped_like_frozen_unpacker() {
+        let mut hpi = hpi_for_member(b"missing.bin", 4, 0);
+        hpi[0x1c..0x20].copy_from_slice(&4u32.to_le_bytes());
+        let inventory = HpiHpbParser
+            .inspect(&hpi, &[1, 2, 3, 4], ExtractionBudget::default())
+            .unwrap();
+        assert!(inventory.members.is_empty());
+    }
+
+    #[test]
+    fn compressed_tail_shorter_than_header_is_skipped() {
+        let mut hpi = hpi_for_member(b"tiny.bin", 1, u32::MAX);
+        hpi[0x1c..0x20].copy_from_slice(&1u32.to_le_bytes());
+        let budget = ExtractionBudget {
+            max_member_bytes: 4,
+            ..ExtractionBudget::default()
+        };
+        let inventory = HpiHpbParser.inspect(&hpi, &[0u8; 0x20], budget).unwrap();
+        assert!(inventory.members.is_empty());
+    }
+
+    #[test]
+    fn compressed_hpi_size_hint_does_not_drive_output_budget() {
+        let hpb = literal_acmp(&[1, 2, 3, 4]);
+        let hpi = hpi_for_member(b"compressed.bin", hpb.len() as u32, u32::MAX);
+        let budget = ExtractionBudget {
+            max_member_bytes: 4,
+            ..ExtractionBudget::default()
+        };
+        let inventory = HpiHpbParser.inspect(&hpi, &hpb, budget).unwrap();
+        assert_eq!(inventory.members.len(), 1);
+        assert_eq!(inventory.members[0].expanded_size, Some(4));
     }
 
     #[test]
