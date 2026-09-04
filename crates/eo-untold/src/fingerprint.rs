@@ -7,23 +7,12 @@ use std::collections::BTreeMap;
 pub const FINGERPRINT_SCHEMA: u32 = 1;
 pub const FINGERPRINT_KIND: &str = "eo-texrip-structural-regression-fingerprint";
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PrivacyStatement {
     pub contains_rom_bytes: bool,
     pub contains_decoded_pixels: bool,
     pub contains_source_paths: bool,
     pub contains_texture_or_model_names: bool,
-}
-
-impl Default for PrivacyStatement {
-    fn default() -> Self {
-        Self {
-            contains_rom_bytes: false,
-            contains_decoded_pixels: false,
-            contains_source_paths: false,
-            contains_texture_or_model_names: false,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -137,7 +126,11 @@ pub fn build_fingerprint(inventory: &UntoldInventory) -> StructuralFingerprint {
         schema_version: FINGERPRINT_SCHEMA,
         kind: FINGERPRINT_KIND.to_owned(),
         game_id: inventory.profile_id.clone(),
-        title_id: inventory.title_id.clone().unwrap_or_default().to_ascii_uppercase(),
+        title_id: inventory
+            .title_id
+            .clone()
+            .unwrap_or_default()
+            .to_ascii_uppercase(),
         product_code: inventory.product_code.clone().unwrap_or_default(),
         asset_count: assets.len(),
         asset_descriptor_sha256,
@@ -176,7 +169,10 @@ pub fn build_fingerprint(inventory: &UntoldInventory) -> StructuralFingerprint {
             ("payloads".to_owned(), inventory.model_payloads),
             ("cgfx_payloads".to_owned(), inventory.cgfx_payloads),
             ("bch_payloads".to_owned(), inventory.bch_payloads),
-            ("bam2_bch_payloads".to_owned(), inventory.bam2_bch_payloads),
+            (
+                "bam2_bch_payloads".to_owned(),
+                inventory.bam2_bch_payloads,
+            ),
             ("models_found".to_owned(), inventory.summary.models_found),
             (
                 "materials_found".to_owned(),
@@ -272,11 +268,30 @@ mod tests {
 
     #[test]
     fn fingerprint_is_privacy_safe_and_order_independent() {
-        let a = ParityAsset::test_fixture("AAAAAAAAAAAAAAAA", 8, 8, 8, "eou_stex_strict", "ui", 2);
-        let b = ParityAsset::test_fixture("BBBBBBBBBBBBBBBB", 16, 8, 0, "cgfx_struct", "monsters", 0);
+        let a = ParityAsset::test_fixture(
+            "AAAAAAAAAAAAAAAA",
+            8,
+            8,
+            8,
+            "eou_stex_strict",
+            "ui",
+            2,
+        );
+        let b = ParityAsset::test_fixture(
+            "BBBBBBBBBBBBBBBB",
+            16,
+            8,
+            0,
+            "cgfx_struct",
+            "monsters",
+            0,
+        );
         let forward = build_fingerprint(&inventory_with_assets(vec![a.clone(), b.clone()]));
         let reverse = build_fingerprint(&inventory_with_assets(vec![b, a]));
-        assert_eq!(forward.asset_descriptor_sha256, reverse.asset_descriptor_sha256);
+        assert_eq!(
+            forward.asset_descriptor_sha256,
+            reverse.asset_descriptor_sha256
+        );
         assert_eq!(forward.asset_count, 2);
         assert_eq!(forward.material_bound_assets, 1);
         assert_eq!(forward.title_id, "00040000000EC700");
