@@ -719,15 +719,17 @@ fn inventory_file(file: &VirtualFile, state: &mut ScanState) {
 fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
     if is_stex(data) {
         match parse_stex(data) {
-            Ok(texture) => push_asset(
-                path,
-                texture.name.as_deref().unwrap_or(""),
-                "eou_stex_strict",
-                &texture.encoded,
-                BTreeSet::new(),
-                false,
-                state,
-            ),
+            Ok(texture) => {
+                push_asset(
+                    path,
+                    texture.name.as_deref().unwrap_or(""),
+                    "eou_stex_strict",
+                    &texture.encoded,
+                    BTreeSet::new(),
+                    false,
+                    state,
+                );
+            }
             Err(error) => state.issue(path, "stex", error),
         }
         return;
@@ -791,7 +793,16 @@ fn scan_cgfx_payload(path: &str, data: &[u8], container_offset: u64, state: &mut
         CgfxModelInspector.inspect(data),
         state,
     );
-    add_cgfx_assets(path, &container, &local_bindings, state);
+    let decoded_names = add_cgfx_assets(path, &container, &local_bindings, state);
+    report_missing_material_textures(
+        path,
+        "cgfx_material_texture_missing",
+        container_offset,
+        "MTOB",
+        &local_bindings,
+        &decoded_names,
+        state,
+    );
 }
 
 fn scan_bch_payload(
@@ -822,7 +833,16 @@ fn scan_bch_payload(
         BchModelInspector.inspect(data),
         state,
     );
-    add_bch_assets(path, &container, &local_bindings, state);
+    let decoded_names = add_bch_assets(path, &container, &local_bindings, state);
+    report_missing_material_textures(
+        path,
+        "bch_material_texture_missing",
+        container_offset,
+        "H3D material",
+        &local_bindings,
+        &decoded_names,
+        state,
+    );
 }
 
 fn inspect_model(
@@ -880,9 +900,10 @@ fn add_cgfx_assets(
     container: &CgfxContainer,
     bindings: &BTreeMap<String, BTreeSet<String>>,
     state: &mut ScanState,
-) {
+) -> BTreeSet<String> {
+    let mut decoded_names = BTreeSet::new();
     for texture in &container.textures {
-        push_asset(
+        if push_asset(
             path,
             &texture.name,
             "cgfx_struct",
@@ -890,8 +911,11 @@ fn add_cgfx_assets(
             bindings.get(&texture.name).cloned().unwrap_or_default(),
             true,
             state,
-        );
+        ) {
+            decoded_names.insert(texture.name.clone());
+        }
     }
+    decoded_names
 }
 
 fn add_bch_assets(
@@ -899,9 +923,10 @@ fn add_bch_assets(
     container: &BchContainer,
     bindings: &BTreeMap<String, BTreeSet<String>>,
     state: &mut ScanState,
-) {
+) -> BTreeSet<String> {
+    let mut decoded_names = BTreeSet::new();
     for texture in &container.textures {
-        push_asset(
+        if push_asset(
             path,
             &texture.name,
             "bch_struct",
@@ -909,8 +934,39 @@ fn add_bch_assets(
             bindings.get(&texture.name).cloned().unwrap_or_default(),
             true,
             state,
-        );
+        ) {
+            decoded_names.insert(texture.name.clone());
+        }
     }
+    decoded_names
+}
+
+fn report_missing_material_textures(
+    path: &str,
+    stage: &str,
+    container_offset: u64,
+    reference_label: &str,
+    bindings: &BTreeMap<String, BTreeSet<String>>,
+    decoded_names: &BTreeSet<String>,
+    state: &mut ScanState,
+) {
+    let missing = bindings
+        .keys()
+        .filter(|name| !decoded_names.contains(*name))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    state.issue(
+        path,
+        stage,
+        format!(
+            "offset 0x{container_offset:X}: {} {reference_label} texture reference(s) were not decoded: {}",
+            missing.len(),
+            missing.iter().take(20).copied().collect::<Vec<_>>().join(", ")
+        ),
+    );
 }
 
 fn push_asset(
@@ -921,11 +977,11 @@ fn push_asset(
     binding_keys: BTreeSet<String>,
     model_texture: bool,
     state: &mut ScanState,
-) {
+) -> bool {
     let decoder = NativePicaDecoder;
     if let Err(error) = decoder.decode_base_level(encoded) {
         state.issue(path, "texture_decode", error);
-        return;
+        return false;
     }
     state.summary.decoded_before_dedup += 1;
     if model_texture {
@@ -938,6 +994,7 @@ fn push_asset(
         encoded,
         binding_keys,
     ));
+    true
 }
 
 fn candidate_path(path: &str) -> bool {
@@ -1583,6 +1640,63 @@ mod tests {
         assert_eq!(inventory.summary.strict_candidate_files, 1);
         assert_eq!(inventory.summary.issues, 1);
         assert_eq!(inventory.issues[0].stage, "unsupported_parity_container");
+    }
+
+    #[test]
+    fn missing_material_texture_references_emit_one_frozen_decoder_issue_per_payload() {
+        let bindings = BTreeMap::from([
+            (
+                "decoded".to_owned(),
+                BTreeSet::from(["binding-decoded".to_owned()]),
+            ),
+            (
+                "missing-a".to_owned(),
+                BTreeSet::from(["binding-a".to_owned()]),
+            ),
+            (
+                "missing-b".to_owned(),
+                BTreeSet::from(["binding-b".to_owned()]),
+            ),
+        ]);
+        let decoded_names = BTreeSet::from(["decoded".to_owned()]);
+        let mut state = ScanState::new(ExtractionBudget::default());
+
+        report_missing_material_textures(
+            "model.bam",
+            "cgfx_material_texture_missing",
+            0x123,
+            "MTOB",
+            &bindings,
+            &decoded_names,
+            &mut state,
+        );
+
+        assert_eq!(state.issues.len(), 1);
+        assert_eq!(state.issues[0].stage, "cgfx_material_texture_missing");
+        assert!(state.issues[0].message.contains("2 MTOB texture reference(s)"));
+        assert!(state.issues[0].message.contains("missing-a, missing-b"));
+    }
+
+    #[test]
+    fn fully_decoded_material_texture_references_do_not_emit_missing_issue() {
+        let bindings = BTreeMap::from([(
+            "decoded".to_owned(),
+            BTreeSet::from(["binding-decoded".to_owned()]),
+        )]);
+        let decoded_names = BTreeSet::from(["decoded".to_owned()]);
+        let mut state = ScanState::new(ExtractionBudget::default());
+
+        report_missing_material_textures(
+            "model.bam2",
+            "bch_material_texture_missing",
+            0x40,
+            "H3D material",
+            &bindings,
+            &decoded_names,
+            &mut state,
+        );
+
+        assert!(state.issues.is_empty());
     }
 
     #[test]
