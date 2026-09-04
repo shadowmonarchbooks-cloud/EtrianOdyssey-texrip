@@ -1,22 +1,32 @@
-//! Native EOU1/EO2U orchestration and parity inventory.
+//! Native EOU1/EO2U orchestration and structural parity inventory.
 //!
 //! 0.50 proved the individual ROM, archive, texture-container, and model parsers.
-//! 0.60 composes those bounded pieces into the first end-to-end Untold path. The
-//! inventory deliberately mirrors the copyright-safe summary fields emitted by
-//! the frozen Python reference, while keeping semantic classification out of this
-//! layer until structural evidence supports it.
+//! 0.60 composes those bounded pieces into an end-to-end Untold path and emits a
+//! copyright-safe fingerprint compatible with the frozen Python reference.
 
+mod asset;
+pub mod cityhash;
+pub mod fingerprint;
+
+pub use asset::ParityAsset;
+pub use fingerprint::{
+    build_fingerprint, compare_fingerprints, FingerprintComparison, FingerprintDifference,
+    PrivacyStatement, StructuralFingerprint,
+};
+
+use asset::{bind_external_texture_names, dedupe_assets};
 use eo_archives::{
     ArchiveParser, EplParser, ExtractionBudget, ExtractionUsage, FarcParser, HpiHpbParser,
 };
 use eo_core::GameId;
-use eo_models::{BchModelInspector, CgfxModelInspector, ModelInspector};
+use eo_models::{BchModelInspector, CgfxModelInspector, ModelInspector, ModelInventory};
 use eo_profiles::detect_verified_profile;
 use eo_rom::{RomError, RomReader};
 use eo_textures::{
-    bch::{parse_bch, parse_bch_wrapper},
-    cgfx::{is_cgfx, parse_atbc, parse_cgfx},
+    bch::{parse_bch, parse_bch_wrapper, BchContainer},
+    cgfx::{is_cgfx, parse_atbc, parse_cgfx, CgfxContainer},
     stex::{is_stex, parse_stex},
+    EncodedTexture, NativePicaDecoder, TextureDecoder,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,6 +59,29 @@ pub struct ParitySummary {
     pub bam_bch_files: u64,
 }
 
+impl ParitySummary {
+    pub(crate) fn as_fingerprint_map(&self) -> BTreeMap<String, u64> {
+        BTreeMap::from([
+            ("strict_candidate_files".to_owned(), self.strict_candidate_files),
+            ("decoded_before_dedup".to_owned(), self.decoded_before_dedup),
+            ("issues".to_owned(), self.issues),
+            ("hpx_pairs".to_owned(), self.hpx_pairs),
+            ("hpx_files".to_owned(), self.hpx_files),
+            ("farc_archives".to_owned(), self.farc_archives),
+            ("farc_files".to_owned(), self.farc_files),
+            ("epl_archives".to_owned(), self.epl_archives),
+            ("epl_files".to_owned(), self.epl_files),
+            ("models_found".to_owned(), self.models_found),
+            ("model_materials_found".to_owned(), self.model_materials_found),
+            ("stex_files".to_owned(), self.stex_files),
+            ("atbc_files".to_owned(), self.atbc_files),
+            ("cgfx_files".to_owned(), self.cgfx_files),
+            ("wrapped_bch_files".to_owned(), self.wrapped_bch_files),
+            ("bam_bch_files".to_owned(), self.bam_bch_files),
+        ])
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UntoldInventory {
     pub profile_id: String,
@@ -60,6 +93,13 @@ pub struct UntoldInventory {
     pub extraction_usage: ExtractionUsage,
     pub summary: ParitySummary,
     pub issues: Vec<ScanIssue>,
+    pub assets: Vec<ParityAsset>,
+    pub model_payloads: u64,
+    pub cgfx_payloads: u64,
+    pub bch_payloads: u64,
+    pub bam2_bch_payloads: u64,
+    pub texture_descriptors_found: u64,
+    pub decoded_3d_textures: u64,
 }
 
 impl UntoldInventory {
@@ -67,6 +107,10 @@ impl UntoldInventory {
         let mut summary = self.summary.clone();
         summary.issues = self.issues.len() as u64;
         summary
+    }
+
+    pub fn structural_fingerprint(&self) -> StructuralFingerprint {
+        build_fingerprint(self)
     }
 }
 
@@ -92,8 +136,15 @@ struct ScanState {
     budget: ExtractionBudget,
     usage: ExtractionUsage,
     summary: ParitySummary,
-    material_texture_bindings: u64,
     issues: Vec<ScanIssue>,
+    assets: Vec<ParityAsset>,
+    bindings_by_name: BTreeMap<String, BTreeSet<String>>,
+    model_payloads: u64,
+    cgfx_payloads: u64,
+    bch_payloads: u64,
+    bam2_bch_payloads: u64,
+    texture_descriptors_found: u64,
+    decoded_3d_textures: u64,
 }
 
 impl ScanState {
@@ -102,8 +153,15 @@ impl ScanState {
             budget,
             usage: ExtractionUsage::default(),
             summary: ParitySummary::default(),
-            material_texture_bindings: 0,
             issues: Vec::new(),
+            assets: Vec::new(),
+            bindings_by_name: BTreeMap::new(),
+            model_payloads: 0,
+            cgfx_payloads: 0,
+            bch_payloads: 0,
+            bam2_bch_payloads: 0,
+            texture_descriptors_found: 0,
+            decoded_3d_textures: 0,
         }
     }
 
@@ -118,9 +176,9 @@ impl ScanState {
 
 /// Inspect a verified EOU1/EO2U ROM using only native Rust readers/parsers.
 ///
-/// This first 0.60 path recursively expands paired HPI/HPB, FARC, and EPL data
-/// in memory under the shared extraction budget. It does not write extracted
-/// proprietary bytes to disk and does not broaden file-format guesses.
+/// HPI/HPB, FARC, and EPL are recursively expanded in memory under the shared
+/// extraction budget. No extracted proprietary bytes, paths, or model/texture
+/// names are written into the structural fingerprint.
 pub fn inventory_reader<R: RomReader>(
     reader: &R,
     budget: ExtractionBudget,
@@ -170,7 +228,14 @@ pub fn inventory_reader<R: RomReader>(
     }
 
     scan_file_set(files, 0, &mut state);
+    let mut assets = dedupe_assets(state.assets);
+    bind_external_texture_names(&mut assets, &state.bindings_by_name);
     state.summary.issues = state.issues.len() as u64;
+    let material_texture_bindings = state
+        .bindings_by_name
+        .values()
+        .map(|bindings| bindings.len() as u64)
+        .sum();
 
     Ok(UntoldInventory {
         profile_id: profile.profile_id.to_owned(),
@@ -178,10 +243,17 @@ pub fn inventory_reader<R: RomReader>(
         title_id: hint.title_id.map(|value| value.to_string()),
         product_code: hint.product_code,
         romfs_files: entries.len() as u64,
-        material_texture_bindings: state.material_texture_bindings,
+        material_texture_bindings,
         extraction_usage: state.usage,
         summary: state.summary,
         issues: state.issues,
+        assets,
+        model_payloads: state.model_payloads,
+        cgfx_payloads: state.cgfx_payloads,
+        bch_payloads: state.bch_payloads,
+        bam2_bch_payloads: state.bam2_bch_payloads,
+        texture_descriptors_found: state.texture_descriptors_found,
+        decoded_3d_textures: state.decoded_3d_textures,
     })
 }
 
@@ -250,6 +322,9 @@ fn scan_hpi_pair(hpi: &VirtualFile, hpb: &VirtualFile, depth: u16, state: &mut S
 fn scan_single_file(file: VirtualFile, depth: u16, state: &mut ScanState) {
     let farc = FarcParser;
     if farc.probe(&file.data) {
+        // The frozen strict selector recognizes FARC magic as a candidate even
+        // though the archive is then expanded before texture decoding.
+        state.summary.strict_candidate_files += 1;
         state.summary.farc_archives += 1;
         scan_single_archive(file, depth, state, ArchiveFlavor::Farc);
         return;
@@ -323,7 +398,15 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
         strict_candidate = true;
         state.summary.stex_files += 1;
         match parse_stex(data) {
-            Ok(_) => state.summary.decoded_before_dedup += 1,
+            Ok(texture) => push_asset(
+                path,
+                texture.name.as_deref().unwrap_or(""),
+                "eou_stex_strict",
+                &texture.encoded,
+                BTreeSet::new(),
+                false,
+                state,
+            ),
             Err(error) => state.issue(path, "stex", error),
         }
     }
@@ -331,10 +414,7 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
     if is_cgfx(data) {
         strict_candidate = true;
         state.summary.cgfx_files += 1;
-        match parse_cgfx(data) {
-            Ok(container) => state.summary.decoded_before_dedup += container.textures.len() as u64,
-            Err(error) => state.issue(path, "cgfx", error),
-        }
+        scan_cgfx_payload(path, data, 0, state);
     }
 
     if data.get(..4) == Some(b"ATBC") {
@@ -346,17 +426,15 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
                 }
                 for payload in wrapper.cgfx_payloads {
                     let start = payload.offset as usize;
-                    let end = start.saturating_add(payload.size as usize);
+                    let Some(end) = start.checked_add(payload.size as usize) else {
+                        state.issue(path, "atbc_cgfx_bounds", "embedded CGFX extent overflow");
+                        continue;
+                    };
                     let Some(bytes) = data.get(start..end) else {
                         state.issue(path, "atbc_cgfx_bounds", "embedded CGFX extent is invalid");
                         continue;
                     };
-                    match parse_cgfx(bytes) {
-                        Ok(container) => {
-                            state.summary.decoded_before_dedup += container.textures.len() as u64
-                        }
-                        Err(error) => state.issue(path, "atbc_cgfx", error),
-                    }
+                    scan_cgfx_payload(path, bytes, payload.offset, state);
                 }
             }
             Err(error) => state.issue(path, "atbc", error),
@@ -373,62 +451,206 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
                         state.summary.bam_bch_files += 1;
                     }
                 }
-                for index in 0..wrapper.payloads.len() {
-                    match wrapper.parse_payload(data, index) {
-                        Ok(container) => {
-                            state.summary.decoded_before_dedup += container.textures.len() as u64
-                        }
-                        Err(error) => state.issue(path, "wrapped_bch", error),
-                    }
+                for payload in wrapper.payloads {
+                    let start = payload.offset as usize;
+                    let Some(bytes) = data.get(start..) else {
+                        state.issue(path, "wrapped_bch_bounds", "embedded BCH offset is invalid");
+                        continue;
+                    };
+                    scan_bch_payload(
+                        path,
+                        bytes,
+                        payload.offset,
+                        ext.as_deref() == Some("bam2"),
+                        state,
+                    );
                 }
             }
             Err(error) => state.issue(path, "bch_wrapper", error),
         }
     } else if data.get(..4) == Some(b"BCH\0") {
         strict_candidate = true;
-        match parse_bch(data) {
-            Ok(container) => state.summary.decoded_before_dedup += container.textures.len() as u64,
-            Err(error) => state.issue(path, "bch", error),
-        }
+        scan_bch_payload(path, data, 0, false, state);
     }
 
-    let cgfx_inspector = CgfxModelInspector;
-    if cgfx_inspector.probe(data) {
+    if matches!(data.get(..4), Some(b"CTPK") | Some(b"CTXB") | Some(b"ctxb") | Some(b"cmb ")) {
         strict_candidate = true;
-        match cgfx_inspector.inspect(data) {
-            Ok(inventory) => {
-                state.summary.models_found += 1;
-                state.summary.model_materials_found += inventory.materials.len() as u64;
-                state.material_texture_bindings += inventory
-                    .materials
-                    .iter()
-                    .map(|material| material.textures.len() as u64)
-                    .sum::<u64>();
-            }
-            Err(error) => state.issue(path, "cgfx_model", error),
-        }
-    }
-
-    let bch_inspector = BchModelInspector;
-    if bch_inspector.probe(data) {
-        strict_candidate = true;
-        match bch_inspector.inspect(data) {
-            Ok(inventory) => {
-                state.summary.models_found += 1;
-                state.summary.model_materials_found += inventory.materials.len() as u64;
-                state.material_texture_bindings += inventory
-                    .materials
-                    .iter()
-                    .map(|material| material.textures.len() as u64)
-                    .sum::<u64>();
-            }
-            Err(error) => state.issue(path, "bch_model", error),
-        }
+        state.issue(
+            path,
+            "unsupported_parity_container",
+            "legacy reference recognizes this container but native parity support is not implemented yet",
+        );
     }
 
     if strict_candidate {
         state.summary.strict_candidate_files += 1;
     }
+}
+
+fn scan_cgfx_payload(path: &str, data: &[u8], container_offset: u64, state: &mut ScanState) {
+    let container = match parse_cgfx(data) {
+        Ok(value) => value,
+        Err(error) => {
+            state.issue(path, "cgfx", error);
+            return;
+        }
+    };
+    state.model_payloads += 1;
+    state.cgfx_payloads += 1;
+    state.texture_descriptors_found += container.textures.len() as u64;
+
+    let local_bindings = inspect_model(
+        path,
+        "cgfx",
+        container_offset,
+        CgfxModelInspector.inspect(data),
+        state,
+    );
+    add_cgfx_assets(path, &container, &local_bindings, state);
+}
+
+fn scan_bch_payload(
+    path: &str,
+    data: &[u8],
+    container_offset: u64,
+    bam2: bool,
+    state: &mut ScanState,
+) {
+    let container = match parse_bch(data) {
+        Ok(value) => value,
+        Err(error) => {
+            state.issue(path, "bch", error);
+            return;
+        }
+    };
+    state.model_payloads += 1;
+    state.bch_payloads += 1;
+    if bam2 {
+        state.bam2_bch_payloads += 1;
+    }
+    state.texture_descriptors_found += container.textures.len() as u64;
+
+    let local_bindings = inspect_model(
+        path,
+        "bch",
+        container_offset,
+        BchModelInspector.inspect(data),
+        state,
+    );
+    add_bch_assets(path, &container, &local_bindings, state);
+}
+
+fn inspect_model(
+    path: &str,
+    format: &str,
+    container_offset: u64,
+    result: Result<ModelInventory, eo_models::ModelError>,
+    state: &mut ScanState,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let inventory = match result {
+        Ok(value) => value,
+        Err(error) => {
+            state.issue(path, &format!("{format}_model"), error);
+            return BTreeMap::new();
+        }
+    };
+    if inventory.model_name.is_some() || !inventory.materials.is_empty() {
+        // The 0.50 inspector currently returns one payload-level inventory. If a
+        // real parity run proves multi-model payloads, expose the structural model
+        // count from eo-models rather than inferring it here.
+        state.summary.models_found += 1;
+    }
+    state.summary.model_materials_found += inventory.materials.len() as u64;
+
+    let model_name = inventory.model_name.as_deref().unwrap_or("");
+    let mut local = BTreeMap::<String, BTreeSet<String>>::new();
+    for material in inventory.materials {
+        let material_name = material.name.as_deref().unwrap_or("");
+        for texture in material.textures {
+            let key = format!(
+                "{path}|{format}|{container_offset}|{model_name}|{}|{material_name}|{}|{}|{}",
+                material.index,
+                texture.slot,
+                texture.enabled,
+                texture.internal_name
+            );
+            local
+                .entry(texture.internal_name.clone())
+                .or_default()
+                .insert(key.clone());
+            state
+                .bindings_by_name
+                .entry(texture.internal_name)
+                .or_default()
+                .insert(key);
+        }
+    }
+    local
+}
+
+fn add_cgfx_assets(
+    path: &str,
+    container: &CgfxContainer,
+    bindings: &BTreeMap<String, BTreeSet<String>>,
+    state: &mut ScanState,
+) {
+    for texture in &container.textures {
+        push_asset(
+            path,
+            &texture.name,
+            "cgfx_struct",
+            &texture.encoded,
+            bindings.get(&texture.name).cloned().unwrap_or_default(),
+            true,
+            state,
+        );
+    }
+}
+
+fn add_bch_assets(
+    path: &str,
+    container: &BchContainer,
+    bindings: &BTreeMap<String, BTreeSet<String>>,
+    state: &mut ScanState,
+) {
+    for texture in &container.textures {
+        push_asset(
+            path,
+            &texture.name,
+            "bch_struct",
+            &texture.encoded,
+            bindings.get(&texture.name).cloned().unwrap_or_default(),
+            true,
+            state,
+        );
+    }
+}
+
+fn push_asset(
+    path: &str,
+    internal_name: &str,
+    parser_used: &str,
+    encoded: &EncodedTexture,
+    binding_keys: BTreeSet<String>,
+    model_texture: bool,
+    state: &mut ScanState,
+) {
+    let decoder = NativePicaDecoder;
+    if let Err(error) = decoder.decode_base_level(encoded) {
+        state.issue(path, "texture_decode", error);
+        return;
+    }
+    state.summary.decoded_before_dedup += 1;
+    if model_texture {
+        state.decoded_3d_textures += 1;
+    }
+    state.assets.push(ParityAsset::from_encoded(
+        path,
+        internal_name,
+        parser_used,
+        encoded,
+        binding_keys,
+    ));
 }
 
 fn candidate_path(path: &str) -> bool {
@@ -543,7 +765,7 @@ mod tests {
         }
     }
 
-    fn stex_a8() -> Vec<u8> {
+    fn stex_a8(fill: u8) -> Vec<u8> {
         let mut data = vec![0u8; 0xc0];
         data[..4].copy_from_slice(b"STEX");
         data[0x0c..0x10].copy_from_slice(&8u32.to_le_bytes());
@@ -552,6 +774,7 @@ mod tests {
         data[0x18..0x1c].copy_from_slice(&0x6756u32.to_le_bytes());
         data[0x1c..0x20].copy_from_slice(&64u32.to_le_bytes());
         data[0x20..0x24].copy_from_slice(&0x80u32.to_le_bytes());
+        data[0x80..0xc0].fill(fill);
         data
     }
 
@@ -570,10 +793,10 @@ mod tests {
     }
 
     #[test]
-    fn direct_stex_projects_reference_summary_fields() {
+    fn direct_stex_projects_reference_summary_and_asset_fields() {
         let rom = FakeRom {
             hint: eou1_hint(),
-            files: BTreeMap::from([("tex/ui.stex".to_owned(), stex_a8())]),
+            files: BTreeMap::from([("tex/ui.stex".to_owned(), stex_a8(0x11))]),
         };
         let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
         assert_eq!(inventory.profile_id, "eou1");
@@ -581,12 +804,31 @@ mod tests {
         assert_eq!(inventory.summary.strict_candidate_files, 1);
         assert_eq!(inventory.summary.stex_files, 1);
         assert_eq!(inventory.summary.decoded_before_dedup, 1);
+        assert_eq!(inventory.assets.len(), 1);
+        assert_eq!(inventory.assets[0].candidate_hash, "7ABCF0A736B8A12E");
+        assert_eq!(inventory.assets[0].parser_used, "eou_stex_strict");
+        assert_eq!(inventory.assets[0].category, "ui");
         assert!(inventory.issues.is_empty());
     }
 
     #[test]
+    fn duplicate_encoded_assets_use_legacy_dedupe_identity() {
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([
+                ("ui/a.stex".to_owned(), stex_a8(0x22)),
+                ("misc/b.stex".to_owned(), stex_a8(0x22)),
+            ]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.decoded_before_dedup, 2);
+        assert_eq!(inventory.assets.len(), 1);
+        assert_eq!(inventory.assets[0].category, "ui");
+    }
+
+    #[test]
     fn hpi_hpb_members_are_scanned_recursively_without_disk_extraction() {
-        let payload = stex_a8();
+        let payload = stex_a8(0x33);
         let rom = FakeRom {
             hint: eou1_hint(),
             files: BTreeMap::from([
@@ -603,6 +845,7 @@ mod tests {
         assert_eq!(inventory.summary.stex_files, 1);
         assert_eq!(inventory.summary.decoded_before_dedup, 1);
         assert_eq!(inventory.extraction_usage.members, 1);
+        assert_eq!(inventory.assets.len(), 1);
         assert!(inventory.issues.is_empty());
     }
 
@@ -623,7 +866,7 @@ mod tests {
 
     #[test]
     fn malformed_stex_remains_a_counted_candidate_and_reported_issue() {
-        let mut malformed = stex_a8();
+        let mut malformed = stex_a8(0);
         malformed.truncate(0x90);
         let rom = FakeRom {
             hint: eou1_hint(),
@@ -634,6 +877,21 @@ mod tests {
         assert_eq!(inventory.summary.stex_files, 1);
         assert_eq!(inventory.summary.decoded_before_dedup, 0);
         assert_eq!(inventory.summary.issues, 1);
+        assert!(inventory.assets.is_empty());
+    }
+
+    #[test]
+    fn residual_legacy_container_is_visible_as_a_parity_gap() {
+        let mut ctpk = vec![0u8; 0x40];
+        ctpk[..4].copy_from_slice(b"CTPK");
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("legacy.ctpk".to_owned(), ctpk)]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.strict_candidate_files, 1);
+        assert_eq!(inventory.summary.issues, 1);
+        assert_eq!(inventory.issues[0].stage, "unsupported_parity_container");
     }
 
     #[test]
@@ -664,5 +922,18 @@ mod tests {
         let inventory = inventory_reader(&OversizedRom, budget).unwrap();
         assert_eq!(inventory.summary.issues, 1);
         assert_eq!(inventory.issues[0].stage, "romfs_budget");
+    }
+
+    #[test]
+    fn fingerprint_contains_no_paths_or_names() {
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("secret/path/ui.stex".to_owned(), stex_a8(0x44))]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        let text = serde_json::to_string(&inventory.structural_fingerprint()).unwrap();
+        assert!(!text.contains("secret/path"));
+        assert!(!text.contains("ui.stex"));
+        assert!(text.contains("eo-texrip-structural-regression-fingerprint"));
     }
 }
