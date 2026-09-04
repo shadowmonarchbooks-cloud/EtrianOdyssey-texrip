@@ -11,7 +11,9 @@
 - [x] Enumerate candidate RomFS files through the native `RomReader` contract.
 - [x] Reject oversized candidate reads before requesting their payload bytes.
 - [x] Pair HPI/HPB paths case-insensitively without relying on host filesystem behavior.
-- [x] Expand HPI/HPB, FARC, and EPL recursively in memory under cumulative extraction budgets.
+- [x] Mirror the frozen archive stage order in memory: recursively expand HPI/HPB first, then FARC over RomFS+HPX roots, then EPL over RomFS+HPX+FARC roots, without revisiting an earlier archive family from a later stage.
+- [x] Mirror frozen archive discovery semantics: FARC by four-byte magic, EPL by `.epl` extension, with malformed discoveries counted before parse failure.
+- [x] Mirror family-specific extracted-member naming/safety behavior: HPI paths are traversal-checked, FARC names are flattened/sanitized, and EPL names are basename-sanitized with deterministic suffix inference.
 - [x] Keep extracted proprietary bytes out of persistent parity artifacts.
 - [x] Keep archive discovery counters separate from the frozen strict texture/model candidate count; extracted members are tested independently after expansion.
 
@@ -66,7 +68,7 @@ The native fingerprint intentionally mirrors `eouhd.regression.build_structural_
 
 The descriptor list is sorted deterministically and SHA-256 hashed as compact canonical JSON. Aggregate parser, format, dimension, category, archive, model, and material counters are then compared field-by-field. Source paths and embedded resource names are transient matching data and must not be serialized into the fingerprint.
 
-The compatibility tests pin legacy CityHash64 vectors and a complete two-asset canonical descriptor digest. Synthetic parser tests also cover multi-model BCH inventories, CGFX/BCH alpha-stage transport, material-alpha reduction rules, bounded RomFS probing, and the distinction between a FARC archive and the strict candidates exposed by its members.
+The compatibility tests pin legacy CityHash64 vectors and a complete two-asset canonical descriptor digest. Synthetic parser tests also cover multi-model BCH inventories, CGFX/BCH alpha-stage transport, material-alpha reduction rules, bounded RomFS probing, the frozen two-stage candidate gate, staged HPX/FARC/EPL expansion, archive discovery semantics, family-specific member naming, and the distinction between archive discovery and strict decode candidates.
 
 ## Local parity workflow
 
@@ -86,7 +88,7 @@ The native fingerprint is written to standard output. When a reference fingerpri
 
 ## Remaining verification boundary
 
-The synthetic/reference-backed implementation now includes structural model counts and native material-alpha summary semantics. Those fields are no longer placeholders, but they are still provisional until the same legal EOU1 and EO2U sources are fingerprinted by both the frozen Python pipeline and the native Rust pipeline.
+The synthetic/reference-backed implementation now includes structural model counts, native material-alpha summary semantics, the frozen two-stage candidate gate, and the frozen staged archive/discovery behavior. Those fields and counters are no longer placeholders, but they are still provisional until the same legal EOU1 and EO2U sources are fingerprinted by both the frozen Python pipeline and the native Rust pipeline.
 
 CTPK, CTXB, and CMB remain intentionally unsupported. Their magic or filename extensions alone are not evidence that they are required for Untold parity. If either real-game comparison exposes one of these formats—or another previously unseen structural difference—the mismatch is the evidence used to drive a bounded native parser and synthetic regression test.
 
