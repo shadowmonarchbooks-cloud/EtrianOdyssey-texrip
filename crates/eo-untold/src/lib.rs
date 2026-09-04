@@ -377,8 +377,12 @@ fn scan_hpi_pair(hpi: &VirtualFile, hpb: &VirtualFile, depth: u16, state: &mut S
 }
 
 fn scan_single_file(file: VirtualFile, depth: u16, state: &mut ScanState) {
+    let strict_candidate = strict_texture_signature(&file.path, prefix(&file.data, ROMFS_PROBE_BYTES));
     let farc = FarcParser;
     if farc.probe(&file.data) {
+        if strict_candidate {
+            scan_payload(&file.path, &file.data, state);
+        }
         state.summary.farc_archives += 1;
         scan_single_archive(file, depth, state, ArchiveFlavor::Farc);
         return;
@@ -386,12 +390,17 @@ fn scan_single_file(file: VirtualFile, depth: u16, state: &mut ScanState) {
 
     let epl = EplParser;
     if epl.probe(&file.data) {
+        if strict_candidate {
+            scan_payload(&file.path, &file.data, state);
+        }
         state.summary.epl_archives += 1;
         scan_single_archive(file, depth, state, ArchiveFlavor::Epl);
         return;
     }
 
-    scan_payload(&file.path, &file.data, state);
+    if strict_candidate {
+        scan_payload(&file.path, &file.data, state);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -705,7 +714,7 @@ fn romfs_probe_candidate(probe: &[u8]) -> bool {
     ) {
         return true;
     }
-    contains_magic(probe, b"BCH\0") || has_cgfx_probe(prefix(probe, INVENTORY_PROBE_BYTES))
+    contains_magic(probe, b"BCH\0")
 }
 
 fn strict_texture_signature(path: &str, probe: &[u8]) -> bool {
