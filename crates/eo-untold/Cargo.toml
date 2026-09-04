@@ -14,4 +14,6 @@ eo-profiles = { path = "../eo-profiles" }
 eo-rom = { path = "../eo-rom" }
 eo-textures = { path = "../eo-textures" }
 serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
