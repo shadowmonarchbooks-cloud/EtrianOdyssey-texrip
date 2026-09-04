@@ -502,7 +502,7 @@ fn fragment_alpha_stages(
         let relative_start = (header.commands_addr as usize).checked_add(raw_pointer as usize);
         let command_start = relative_start
             .filter(|start| header.commands_addr as usize <= *start && *start < data.len())
-            .or_else(|| (raw_pointer as usize < data.len()).then_some(raw_pointer as usize));
+            .or_else(|| ((raw_pointer as usize) < data.len()).then_some(raw_pointer as usize));
         let Some(command_start) = command_start else {
             continue;
         };
