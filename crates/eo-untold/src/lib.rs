@@ -140,6 +140,7 @@ pub enum UntoldError {
 struct VirtualFile {
     path: String,
     data: Vec<u8>,
+    depth: u16,
 }
 
 #[derive(Debug)]
@@ -189,9 +190,11 @@ impl ScanState {
 
 /// Inspect a verified EOU1/EO2U ROM using only native Rust readers/parsers.
 ///
-/// HPI/HPB, FARC, and EPL are recursively expanded in memory under the shared
-/// extraction budget. No extracted proprietary bytes, paths, or model/texture
-/// names are written into the structural fingerprint.
+/// Archive expansion mirrors the frozen pipeline's stage order: recursively
+/// expand HPI/HPB first, then recursively expand FARC over the RomFS+HPX roots,
+/// then recursively expand EPL over the RomFS+HPX+FARC roots. This intentionally
+/// does not revisit earlier archive families discovered by a later stage.
+/// Proprietary bytes remain in memory and never enter the structural fingerprint.
 pub fn inventory_reader<R: RomReader>(
     reader: &R,
     budget: ExtractionBudget,
@@ -250,12 +253,13 @@ pub fn inventory_reader<R: RomReader>(
             Ok(data) => files.push(VirtualFile {
                 path: normalize_virtual_path(&entry.virtual_path),
                 data,
+                depth: 0,
             }),
             Err(error) => state.issue(&entry.virtual_path, "romfs_read", error),
         }
     }
 
-    scan_file_set(files, 0, &mut state);
+    scan_staged_file_sets(files, &mut state);
     let mut assets = dedupe_assets(state.assets);
     bind_external_texture_names(&mut assets, &state.bindings_by_name);
     let material_summary = summarize_materials(&state.materials, &assets);
@@ -283,41 +287,223 @@ pub fn inventory_reader<R: RomReader>(
     })
 }
 
-fn scan_file_set(files: Vec<VirtualFile>, depth: u16, state: &mut ScanState) {
-    for file in &files {
+fn scan_staged_file_sets(romfs: Vec<VirtualFile>, state: &mut ScanState) {
+    let hpx = expand_hpx_stage(&romfs, state);
+
+    let mut farc_sources = Vec::with_capacity(romfs.len() + hpx.len());
+    farc_sources.extend(romfs.iter().cloned());
+    farc_sources.extend(hpx.iter().cloned());
+    let farc = expand_single_archive_stage(&farc_sources, ArchiveFlavor::Farc, state);
+
+    let mut epl_sources = Vec::with_capacity(romfs.len() + hpx.len() + farc.len());
+    epl_sources.extend(romfs.iter().cloned());
+    epl_sources.extend(hpx.iter().cloned());
+    epl_sources.extend(farc.iter().cloned());
+    let epl = expand_single_archive_stage(&epl_sources, ArchiveFlavor::Epl, state);
+
+    for file in romfs
+        .iter()
+        .chain(hpx.iter())
+        .chain(farc.iter())
+        .chain(epl.iter())
+    {
         inventory_file(file, state);
-        if !matches!(extension(&file.path).map(str::to_ascii_lowercase).as_deref(), Some("hpi") | Some("hpb"))
-            && strict_texture_signature(&file.path, prefix(&file.data, ROMFS_PROBE_BYTES))
-        {
-            state.summary.strict_candidate_files += 1;
-        }
-    }
-
-    let mut by_path = BTreeMap::new();
-    for (index, file) in files.iter().enumerate() {
-        by_path.entry(path_key(&file.path)).or_insert(index);
-    }
-
-    let mut consumed = BTreeSet::new();
-    for (index, file) in files.iter().enumerate() {
-        if !has_extension(&file.path, "hpi") || consumed.contains(&index) {
+        if matches!(
+            extension(&file.path).map(str::to_ascii_lowercase).as_deref(),
+            Some("hpi") | Some("hpb")
+        ) {
             continue;
         }
-        let partner_key = path_key(&replace_extension(&file.path, "hpb"));
-        let Some(partner_index) = by_path.get(&partner_key).copied() else {
+        if strict_texture_signature(&file.path, prefix(&file.data, ROMFS_PROBE_BYTES)) {
+            state.summary.strict_candidate_files += 1;
+            scan_payload(&file.path, &file.data, state);
+        }
+    }
+}
+
+fn expand_hpx_stage(seed: &[VirtualFile], state: &mut ScanState) -> Vec<VirtualFile> {
+    let mut searchable = seed.to_vec();
+    let mut output = Vec::new();
+    let mut processed = BTreeSet::<String>::new();
+
+    loop {
+        let mut by_path = BTreeMap::<String, usize>::new();
+        for (index, file) in searchable.iter().enumerate() {
+            by_path.entry(path_key(&file.path)).or_insert(index);
+        }
+
+        let mut pairs = Vec::<(usize, usize)>::new();
+        for (index, file) in searchable.iter().enumerate() {
+            if !has_extension(&file.path, "hpi") {
+                continue;
+            }
+            let key = path_key(&file.path);
+            if processed.contains(&key) {
+                continue;
+            }
+            let partner_key = path_key(&replace_extension(&file.path, "hpb"));
+            let Some(partner_index) = by_path.get(&partner_key).copied() else {
+                continue;
+            };
+            processed.insert(key);
+            pairs.push((index, partner_index));
+        }
+        if pairs.is_empty() {
+            break;
+        }
+
+        let mut added = Vec::new();
+        for (hpi_index, hpb_index) in pairs {
+            let hpi = searchable[hpi_index].clone();
+            let hpb = searchable[hpb_index].clone();
+            added.extend(expand_hpi_pair(&hpi, &hpb, state));
+        }
+        output.extend(added.iter().cloned());
+        searchable.extend(added);
+    }
+
+    output
+}
+
+fn expand_hpi_pair(
+    hpi: &VirtualFile,
+    hpb: &VirtualFile,
+    state: &mut ScanState,
+) -> Vec<VirtualFile> {
+    state.summary.hpx_pairs += 1;
+    let parser = HpiHpbParser;
+    let inventory = match parser.inspect(&hpi.data, &hpb.data, state.budget) {
+        Ok(value) => value,
+        Err(error) => {
+            state.issue(&hpi.path, "hpi_hpb_inspect", error);
+            return Vec::new();
+        }
+    };
+    let archive_depth = hpi.depth.max(hpb.depth);
+    if let Err(error) = state
+        .usage
+        .charge_inventory(archive_depth, &inventory, state.budget)
+    {
+        state.issue(&hpi.path, "archive_budget", error);
+        return Vec::new();
+    }
+
+    let mut nested = Vec::new();
+    for member in &inventory.members {
+        let name = member
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("unnamed_{:05}.bin", member.index));
+        let Some(path) = safe_child_path(&hpi.path, &name) else {
             continue;
         };
-        consumed.insert(index);
-        consumed.insert(partner_index);
-        scan_hpi_pair(file, &files[partner_index], depth, state);
+        match parser.read_member(&hpi.data, &hpb.data, member, state.budget) {
+            Ok(data) => nested.push(VirtualFile {
+                path,
+                data,
+                depth: archive_depth.saturating_add(1),
+            }),
+            Err(error) => state.issue(&hpi.path, "hpi_hpb_member", error),
+        }
     }
+    state.summary.hpx_files += nested.len() as u64;
+    nested
+}
 
-    for (index, file) in files.into_iter().enumerate() {
-        if consumed.contains(&index) || has_extension(&file.path, "hpb") {
+#[derive(Clone, Copy)]
+enum ArchiveFlavor {
+    Farc,
+    Epl,
+}
+
+fn expand_single_archive_stage(
+    seed: &[VirtualFile],
+    flavor: ArchiveFlavor,
+    state: &mut ScanState,
+) -> Vec<VirtualFile> {
+    let mut searchable = seed.to_vec();
+    let mut output = Vec::new();
+    let mut processed = BTreeSet::<String>::new();
+    let mut cursor = 0usize;
+
+    while cursor < searchable.len() {
+        let file = searchable[cursor].clone();
+        cursor += 1;
+        if !archive_probe(flavor, &file.data) || !processed.insert(path_key(&file.path)) {
             continue;
         }
-        scan_single_file(file, depth, state);
+        let nested = expand_single_archive(file, flavor, state);
+        output.extend(nested.iter().cloned());
+        searchable.extend(nested);
     }
+
+    output
+}
+
+fn archive_probe(flavor: ArchiveFlavor, data: &[u8]) -> bool {
+    match flavor {
+        ArchiveFlavor::Farc => FarcParser.probe(data),
+        ArchiveFlavor::Epl => EplParser.probe(data),
+    }
+}
+
+fn expand_single_archive(
+    file: VirtualFile,
+    flavor: ArchiveFlavor,
+    state: &mut ScanState,
+) -> Vec<VirtualFile> {
+    match flavor {
+        ArchiveFlavor::Farc => state.summary.farc_archives += 1,
+        ArchiveFlavor::Epl => state.summary.epl_archives += 1,
+    }
+
+    let inventory = match flavor {
+        ArchiveFlavor::Farc => FarcParser.inspect(&file.data, state.budget),
+        ArchiveFlavor::Epl => EplParser.inspect(&file.data, state.budget),
+    };
+    let inventory = match inventory {
+        Ok(value) => value,
+        Err(error) => {
+            state.issue(&file.path, "archive_inspect", error);
+            return Vec::new();
+        }
+    };
+    if let Err(error) = state
+        .usage
+        .charge_inventory(file.depth, &inventory, state.budget)
+    {
+        state.issue(&file.path, "archive_budget", error);
+        return Vec::new();
+    }
+
+    let mut nested = Vec::new();
+    for member in &inventory.members {
+        let name = member
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("unnamed_{:05}.bin", member.index));
+        let Some(path) = safe_child_path(&file.path, &name) else {
+            continue;
+        };
+        let result = match flavor {
+            ArchiveFlavor::Farc => FarcParser.read_member(&file.data, member, state.budget),
+            ArchiveFlavor::Epl => EplParser.read_member(&file.data, member, state.budget),
+        };
+        match result {
+            Ok(data) => nested.push(VirtualFile {
+                path,
+                data,
+                depth: file.depth.saturating_add(1),
+            }),
+            Err(error) => state.issue(&file.path, "archive_member", error),
+        }
+    }
+
+    match flavor {
+        ArchiveFlavor::Farc => state.summary.farc_files += nested.len() as u64,
+        ArchiveFlavor::Epl => state.summary.epl_files += nested.len() as u64,
+    }
+    nested
 }
 
 fn inventory_file(file: &VirtualFile, state: &mut ScanState) {
@@ -339,117 +525,6 @@ fn inventory_file(file: &VirtualFile, state: &mut ScanState) {
     }
     if has_bch && matches!(ext.as_deref(), Some("bam") | Some("bam2")) {
         state.summary.bam_bch_files += 1;
-    }
-}
-
-fn scan_hpi_pair(hpi: &VirtualFile, hpb: &VirtualFile, depth: u16, state: &mut ScanState) {
-    state.summary.hpx_pairs += 1;
-    let parser = HpiHpbParser;
-    let inventory = match parser.inspect(&hpi.data, &hpb.data, state.budget) {
-        Ok(value) => value,
-        Err(error) => {
-            state.issue(&hpi.path, "hpi_hpb_inspect", error);
-            return;
-        }
-    };
-    if let Err(error) = state.usage.charge_inventory(depth, &inventory, state.budget) {
-        state.issue(&hpi.path, "archive_budget", error);
-        return;
-    }
-    state.summary.hpx_files += inventory.members.len() as u64;
-
-    let mut nested = Vec::new();
-    for member in &inventory.members {
-        match parser.read_member(&hpi.data, &hpb.data, member, state.budget) {
-            Ok(data) => nested.push(VirtualFile {
-                path: child_path(
-                    &hpi.path,
-                    member.name.as_deref().unwrap_or("unnamed_member.bin"),
-                ),
-                data,
-            }),
-            Err(error) => state.issue(&hpi.path, "hpi_hpb_member", error),
-        }
-    }
-    if !nested.is_empty() {
-        scan_file_set(nested, depth.saturating_add(1), state);
-    }
-}
-
-fn scan_single_file(file: VirtualFile, depth: u16, state: &mut ScanState) {
-    let strict_candidate = strict_texture_signature(&file.path, prefix(&file.data, ROMFS_PROBE_BYTES));
-    let farc = FarcParser;
-    if farc.probe(&file.data) {
-        if strict_candidate {
-            scan_payload(&file.path, &file.data, state);
-        }
-        state.summary.farc_archives += 1;
-        scan_single_archive(file, depth, state, ArchiveFlavor::Farc);
-        return;
-    }
-
-    let epl = EplParser;
-    if epl.probe(&file.data) {
-        if strict_candidate {
-            scan_payload(&file.path, &file.data, state);
-        }
-        state.summary.epl_archives += 1;
-        scan_single_archive(file, depth, state, ArchiveFlavor::Epl);
-        return;
-    }
-
-    if strict_candidate {
-        scan_payload(&file.path, &file.data, state);
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ArchiveFlavor {
-    Farc,
-    Epl,
-}
-
-fn scan_single_archive(file: VirtualFile, depth: u16, state: &mut ScanState, flavor: ArchiveFlavor) {
-    let inventory = match flavor {
-        ArchiveFlavor::Farc => FarcParser.inspect(&file.data, state.budget),
-        ArchiveFlavor::Epl => EplParser.inspect(&file.data, state.budget),
-    };
-    let inventory = match inventory {
-        Ok(value) => value,
-        Err(error) => {
-            state.issue(&file.path, "archive_inspect", error);
-            return;
-        }
-    };
-    if let Err(error) = state.usage.charge_inventory(depth, &inventory, state.budget) {
-        state.issue(&file.path, "archive_budget", error);
-        return;
-    }
-
-    match flavor {
-        ArchiveFlavor::Farc => state.summary.farc_files += inventory.members.len() as u64,
-        ArchiveFlavor::Epl => state.summary.epl_files += inventory.members.len() as u64,
-    }
-
-    let mut nested = Vec::new();
-    for member in &inventory.members {
-        let result = match flavor {
-            ArchiveFlavor::Farc => FarcParser.read_member(&file.data, member, state.budget),
-            ArchiveFlavor::Epl => EplParser.read_member(&file.data, member, state.budget),
-        };
-        match result {
-            Ok(data) => nested.push(VirtualFile {
-                path: child_path(
-                    &file.path,
-                    member.name.as_deref().unwrap_or("unnamed_member.bin"),
-                ),
-                data,
-            }),
-            Err(error) => state.issue(&file.path, "archive_member", error),
-        }
-    }
-    if !nested.is_empty() {
-        scan_file_set(nested, depth.saturating_add(1), state);
     }
 }
 
@@ -884,10 +959,44 @@ fn replace_extension(path: &str, new_extension: &str) -> String {
     }
 }
 
-fn child_path(parent: &str, child: &str) -> String {
+fn safe_child_path(parent: &str, child: &str) -> Option<String> {
+    if child.is_empty() || child.contains('\0') {
+        return None;
+    }
+    let normalized = child.replace('\\', "/");
+    if normalized.starts_with('/') {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    for part in normalized.split('/') {
+        if part.is_empty()
+            || matches!(part, "." | "..")
+            || part.ends_with([' ', '.'])
+            || part.contains(':')
+            || is_windows_device_name(part)
+        {
+            return None;
+        }
+        parts.push(part);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+
     let parent = normalize_virtual_path(parent);
-    let child = normalize_virtual_path(child).trim_start_matches('/').to_owned();
-    format!("{parent}/{child}")
+    Some(format!("{}/{}", parent.trim_end_matches('/'), parts.join("/")))
+}
+
+fn is_windows_device_name(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or(part).to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    let bytes = stem.as_bytes();
+    bytes.len() == 4
+        && (bytes.starts_with(b"COM") || bytes.starts_with(b"LPT"))
+        && matches!(bytes[3], b'1'..=b'9')
 }
 
 #[cfg(test)]
@@ -965,6 +1074,55 @@ mod tests {
         hpi[0x24..0x28].copy_from_slice(&0u32.to_le_bytes());
         hpi[0x28..0x28 + name.len()].copy_from_slice(name);
         hpi
+    }
+
+    fn farc_with_member(name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut data = vec![0u8; 0xc0 + payload.len()];
+        data[0..4].copy_from_slice(b"FARC");
+        data[0x20..0x24].copy_from_slice(&4u32.to_le_bytes());
+        data[0x24..0x28].copy_from_slice(&0x40u32.to_le_bytes());
+        data[0x28..0x2c].copy_from_slice(&0x80u32.to_le_bytes());
+        data[0x2c..0x30].copy_from_slice(&0xc0u32.to_le_bytes());
+
+        let sir0 = 0x40usize;
+        data[sir0..sir0 + 4].copy_from_slice(b"SIR0");
+        data[sir0 + 4..sir0 + 8].copy_from_slice(&0x10u32.to_le_bytes());
+        data[sir0 + 8..sir0 + 12].copy_from_slice(&0x70u32.to_le_bytes());
+        data[sir0 + 0x10..sir0 + 0x14].copy_from_slice(&0x20u32.to_le_bytes());
+        data[sir0 + 0x14..sir0 + 0x18].copy_from_slice(&1u32.to_le_bytes());
+        data[sir0 + 0x18..sir0 + 0x1c].copy_from_slice(&0u32.to_le_bytes());
+        data[sir0 + 0x20..sir0 + 0x24].copy_from_slice(&0x40u32.to_le_bytes());
+        data[sir0 + 0x24..sir0 + 0x28].copy_from_slice(&0u32.to_le_bytes());
+        data[sir0 + 0x28..sir0 + 0x2c]
+            .copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        for (index, unit) in format!("{name}\0").encode_utf16().enumerate() {
+            let offset = sir0 + 0x40 + index * 2;
+            data[offset..offset + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        data[0xc0..].copy_from_slice(payload);
+        data
+    }
+
+    fn epl_with_member(name: &str, payload: &[u8]) -> Vec<u8> {
+        let payload_offset = 0x1b0usize;
+        let mut data = vec![0u8; payload_offset + payload.len()];
+        data[0x80..0x84].copy_from_slice(&1i32.to_le_bytes());
+        data[0x84..0x88].copy_from_slice(&0i32.to_le_bytes());
+        data[0x88..0x8c].copy_from_slice(&0x90i32.to_le_bytes());
+
+        let record = 0x90usize;
+        data[record + 0x90..record + 0x94].copy_from_slice(&0x180i32.to_le_bytes());
+        let name_bytes = name.as_bytes();
+        let name_len = name_bytes.len().min(35);
+        data[record + 0x9c..record + 0x9c + name_len]
+            .copy_from_slice(&name_bytes[..name_len]);
+
+        let descriptor = 0x180usize;
+        data[descriptor + 0x20..descriptor + 0x24].copy_from_slice(&0x30i32.to_le_bytes());
+        data[descriptor + 0x24..descriptor + 0x28]
+            .copy_from_slice(&(payload.len() as i32).to_le_bytes());
+        data[payload_offset..].copy_from_slice(payload);
+        data
     }
 
     #[test]
@@ -1049,6 +1207,59 @@ mod tests {
         assert_eq!(inventory.summary.decoded_before_dedup, 1);
         assert_eq!(inventory.extraction_usage.members, 1);
         assert_eq!(inventory.assets.len(), 1);
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
+    fn later_epl_stage_expands_epl_extracted_from_farc() {
+        let inner_epl = epl_with_member("leaf.stex", &stex_a8(0x55));
+        let outer_farc = farc_with_member("effects.epl", &inner_epl);
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("effects.farc".to_owned(), outer_farc)]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.farc_archives, 1);
+        assert_eq!(inventory.summary.farc_files, 1);
+        assert_eq!(inventory.summary.epl_archives, 1);
+        assert_eq!(inventory.summary.epl_files, 1);
+        assert_eq!(inventory.summary.strict_candidate_files, 1);
+        assert_eq!(inventory.summary.stex_files, 1);
+        assert_eq!(inventory.assets.len(), 1);
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
+    fn earlier_farc_stage_does_not_revisit_farc_extracted_from_epl() {
+        let late_farc = farc_with_member("late.stex", &stex_a8(0x66));
+        let outer_epl = epl_with_member("late.farc", &late_farc);
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("effects.epl".to_owned(), outer_epl)]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.epl_archives, 1);
+        assert_eq!(inventory.summary.epl_files, 1);
+        assert_eq!(inventory.summary.farc_archives, 0);
+        assert_eq!(inventory.summary.farc_files, 0);
+        assert_eq!(inventory.summary.strict_candidate_files, 0);
+        assert_eq!(inventory.summary.stex_files, 0);
+        assert!(inventory.assets.is_empty());
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
+    fn unsafe_archive_member_is_not_counted_as_written_or_scanned() {
+        let outer_farc = farc_with_member("../escape.stex", &stex_a8(0x77));
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("unsafe.farc".to_owned(), outer_farc)]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.farc_archives, 1);
+        assert_eq!(inventory.summary.farc_files, 0);
+        assert_eq!(inventory.summary.strict_candidate_files, 0);
+        assert!(inventory.assets.is_empty());
         assert!(inventory.issues.is_empty());
     }
 
