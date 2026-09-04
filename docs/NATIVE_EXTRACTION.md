@@ -33,12 +33,32 @@ EOU-textures/
 ├── effects/
 ├── fonts/
 ├── misc/
+├── pack.json
 └── extraction-report.json
 ```
 
 Filenames prefer the texture's internal resource name when one exists. A dimension/format/hash suffix keeps names deterministic and collision-resistant, and filename components are sanitized for Windows.
 
 `extraction-report.json` records the detected game profile, Title ID/product code when available, every written PNG, dimensions, parser provenance, candidate hash, material-binding count, and any warnings encountered while scanning the ROM.
+
+`pack.json` is generated automatically for Azahar custom-texture loading. It maps the exact CityHash64 new-hash value of each extracted encoded level-0 texture to the PNG basename, while allowing EO-TexRip to keep the files organized in category subdirectories.
+
+## Azahar custom texture compatibility
+
+EO-TexRip emits Azahar's current `pack.json` format with:
+
+- `use_new_hash: true`, matching Azahar's CityHash64 hash of the encoded guest texture upload bytes;
+- `skip_mipmap: true`, because EO-TexRip exports the base texture and lets Azahar generate replacement mipmaps;
+- `flip_png_files: true`, matching Azahar's ordinary PNG texture-pack convention;
+- one `textures` mapping for every extracted texture hash.
+
+To use the output in Azahar:
+
+1. In Azahar, open the game's **Custom Texture Location**.
+2. Copy the **contents** of the EO-TexRip output directory into that game's texture directory. Keep `pack.json` at the root and keep the category folders beside it.
+3. Enable **Use Custom Textures** in Azahar.
+
+The detected Title ID is also recorded in `extraction-report.json`, which helps identify the correct game-specific Azahar texture directory when needed.
 
 ## Supported native paths
 
@@ -52,7 +72,8 @@ The current Untold pipeline includes:
 - CGFX/BCMDL textures, including ATBC-wrapped payloads;
 - BCH/H3D textures, including BAM/BAM2/ATBC-wrapped payloads;
 - native PICA200 decoding to tightly packed RGBA8;
-- native PNG export.
+- native PNG export;
+- Azahar new-hash `pack.json` export.
 
 ## Developer CLI
 
@@ -72,4 +93,4 @@ Encrypted content is intentionally rejected rather than guessed. EO-TexRip does 
 
 ## What counts as 0.60 success
 
-For 0.60, the important test is practical: the packaged desktop app should accept a decrypted EOU1 or EO2U ROM and produce useful PNG texture output with understandable warnings for anything not decoded. Legacy Python fingerprint equality is optional diagnostic tooling, not a user requirement and not a release gate by itself.
+For 0.60, the important test is practical: the packaged desktop app should accept a decrypted EOU1 or EO2U ROM and produce useful PNG texture output plus an Azahar-compatible hash map, with understandable warnings for anything not decoded. Legacy Python fingerprint equality is optional diagnostic tooling, not a user requirement and not a release gate by itself.
