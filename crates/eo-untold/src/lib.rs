@@ -7,12 +7,14 @@
 mod asset;
 pub mod cityhash;
 pub mod fingerprint;
+mod material;
 
 pub use asset::ParityAsset;
 pub use fingerprint::{
     build_fingerprint, compare_fingerprints, FingerprintComparison, FingerprintDifference,
     PrivacyStatement, StructuralFingerprint,
 };
+pub use material::MaterialParitySummary;
 
 use asset::{bind_external_texture_names, dedupe_assets};
 use eo_archives::{
@@ -28,6 +30,7 @@ use eo_textures::{
     stex::{is_stex, parse_stex},
     EncodedTexture, NativePicaDecoder, TextureDecoder,
 };
+use material::{summarize_materials, ParityMaterial};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -91,7 +94,9 @@ pub struct UntoldInventory {
     pub title_id: Option<String>,
     pub product_code: Option<String>,
     pub romfs_files: u64,
+    /// Compatibility mirror of `material_summary.material_texture_bindings`.
     pub material_texture_bindings: u64,
+    pub material_summary: MaterialParitySummary,
     pub extraction_usage: ExtractionUsage,
     pub summary: ParitySummary,
     pub issues: Vec<ScanIssue>,
@@ -140,6 +145,7 @@ struct ScanState {
     summary: ParitySummary,
     issues: Vec<ScanIssue>,
     assets: Vec<ParityAsset>,
+    materials: Vec<ParityMaterial>,
     bindings_by_name: BTreeMap<String, BTreeSet<String>>,
     model_payloads: u64,
     cgfx_payloads: u64,
@@ -157,6 +163,7 @@ impl ScanState {
             summary: ParitySummary::default(),
             issues: Vec::new(),
             assets: Vec::new(),
+            materials: Vec::new(),
             bindings_by_name: BTreeMap::new(),
             model_payloads: 0,
             cgfx_payloads: 0,
@@ -247,12 +254,9 @@ pub fn inventory_reader<R: RomReader>(
     scan_file_set(files, 0, &mut state);
     let mut assets = dedupe_assets(state.assets);
     bind_external_texture_names(&mut assets, &state.bindings_by_name);
+    let material_summary = summarize_materials(&state.materials, &assets);
+    let material_texture_bindings = material_summary.material_texture_bindings;
     state.summary.issues = state.issues.len() as u64;
-    let material_texture_bindings = state
-        .bindings_by_name
-        .values()
-        .map(|bindings| bindings.len() as u64)
-        .sum();
 
     Ok(UntoldInventory {
         profile_id: profile.profile_id.to_owned(),
@@ -261,6 +265,7 @@ pub fn inventory_reader<R: RomReader>(
         product_code: hint.product_code,
         romfs_files: entries.len() as u64,
         material_texture_bindings,
+        material_summary,
         extraction_usage: state.usage,
         summary: state.summary,
         issues: state.issues,
@@ -581,14 +586,20 @@ fn inspect_model(
     let mut local = BTreeMap::<String, BTreeSet<String>>::new();
     for material in inventory.materials {
         let material_name = material.name.as_deref().unwrap_or("");
+        let mut parity_material = ParityMaterial {
+            slots: BTreeMap::new(),
+            alpha_stages: material.alpha_stages.clone(),
+        };
         for texture in material.textures {
             let key = format!(
-                "{path}|{format}|{container_offset}|{model_name}|{}|{material_name}|{}|{}|{}",
-                material.index,
+                "{path}|{format}|{container_offset}|{}|{model_name}|{}|{material_name}|{}|{}|{}",
+                material.model_index,
+                material.model_material_index,
                 texture.slot,
                 texture.enabled,
                 texture.internal_name
             );
+            parity_material.insert_slot(texture.slot, key.clone(), texture.enabled);
             local
                 .entry(texture.internal_name.clone())
                 .or_default()
@@ -599,6 +610,7 @@ fn inspect_model(
                 .or_default()
                 .insert(key);
         }
+        state.materials.push(parity_material);
     }
     local
 }
@@ -842,6 +854,7 @@ mod tests {
         assert_eq!(inventory.assets[0].candidate_hash, "7ABCF0A736B8A12E");
         assert_eq!(inventory.assets[0].parser_used, "eou_stex_strict");
         assert_eq!(inventory.assets[0].category, "ui");
+        assert_eq!(inventory.material_summary, MaterialParitySummary::default());
         assert!(inventory.issues.is_empty());
     }
 
