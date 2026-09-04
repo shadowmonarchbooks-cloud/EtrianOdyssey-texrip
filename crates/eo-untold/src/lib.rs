@@ -461,7 +461,7 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
                         path,
                         bytes,
                         payload.offset,
-                        ext.as_deref() == Some("bam2"),
+                        matches!(ext.as_deref(), Some("bam") | Some("bam2")),
                         state,
                     );
                 }
@@ -473,7 +473,10 @@ fn scan_payload(path: &str, data: &[u8], state: &mut ScanState) {
         scan_bch_payload(path, data, 0, false, state);
     }
 
-    if matches!(data.get(..4), Some(b"CTPK") | Some(b"CTXB") | Some(b"ctxb") | Some(b"cmb ")) {
+    if matches!(
+        data.get(..4),
+        Some(b"CTPK") | Some(b"CTXB") | Some(b"ctxb") | Some(b"cmb ")
+    ) {
         strict_candidate = true;
         state.issue(
             path,
@@ -816,8 +819,8 @@ mod tests {
         let rom = FakeRom {
             hint: eou1_hint(),
             files: BTreeMap::from([
-                ("ui/a.stex".to_owned(), stex_a8(0x22)),
-                ("misc/b.stex".to_owned(), stex_a8(0x22)),
+                ("a_ui/a.stex".to_owned(), stex_a8(0x22)),
+                ("z_misc/b.stex".to_owned(), stex_a8(0x22)),
             ]),
         };
         let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
