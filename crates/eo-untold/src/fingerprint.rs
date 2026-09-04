@@ -151,20 +151,7 @@ pub fn build_fingerprint(inventory: &UntoldInventory) -> StructuralFingerprint {
             .filter(|asset| asset.material_binding_count > 0)
             .count(),
         summary: inventory.summary.as_fingerprint_map(),
-        materials: BTreeMap::from([
-            (
-                "materials_found".to_owned(),
-                inventory.summary.model_materials_found,
-            ),
-            (
-                "material_texture_bindings".to_owned(),
-                inventory.material_texture_bindings,
-            ),
-            ("explicit_texture_alpha_channels".to_owned(), 0),
-            ("constant_texture_alpha_inputs".to_owned(), 0),
-            ("resolved_material_alphas".to_owned(), 0),
-            ("unresolved_material_alphas".to_owned(), 0),
-        ]),
+        materials: inventory.material_summary.as_fingerprint_map(),
         models: BTreeMap::from([
             ("payloads".to_owned(), inventory.model_payloads),
             ("cgfx_payloads".to_owned(), inventory.cgfx_payloads),
@@ -241,18 +228,23 @@ fn increment(counts: &mut BTreeMap<String, u64>, key: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParitySummary, UntoldInventory};
+    use crate::{MaterialParitySummary, ParitySummary, UntoldInventory};
     use eo_archives::ExtractionUsage;
     use eo_core::GameId;
 
     fn inventory_with_assets(assets: Vec<ParityAsset>) -> UntoldInventory {
+        let material_summary = MaterialParitySummary {
+            material_texture_bindings: 2,
+            ..MaterialParitySummary::default()
+        };
         UntoldInventory {
             profile_id: "eou1".to_owned(),
             game_id: GameId::EtrianOdysseyUntold,
             title_id: Some("00040000000ec700".to_owned()),
             product_code: Some("CTR-P-BSK-USA".to_owned()),
             romfs_files: 1,
-            material_texture_bindings: 2,
+            material_texture_bindings: material_summary.material_texture_bindings,
+            material_summary,
             extraction_usage: ExtractionUsage::default(),
             summary: ParitySummary::default(),
             issues: Vec::new(),
@@ -295,6 +287,7 @@ mod tests {
         assert_eq!(forward.asset_count, 2);
         assert_eq!(forward.material_bound_assets, 1);
         assert_eq!(forward.title_id, "00040000000EC700");
+        assert_eq!(forward.materials["material_texture_bindings"], 2);
         assert_eq!(forward.privacy, PrivacyStatement::default());
     }
 
