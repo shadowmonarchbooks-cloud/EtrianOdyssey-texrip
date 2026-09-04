@@ -1,0 +1,16 @@
+[package]
+name = "eo-texrip-desktop"
+version = "0.60.0-rc.1"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "EO-TexRip desktop application"
+
+[[bin]]
+name = "EO-TexRip"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+eo-extract = { path = "../../crates/eo-extract" }
+eframe = { version = "0.29.1", default-features = false, features = ["default_fonts", "glow"] }
+rfd = "0.15.1"
