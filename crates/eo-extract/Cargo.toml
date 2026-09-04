@@ -1,0 +1,19 @@
+[package]
+name = "eo-extract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "User-facing native texture export for EO-TexRip"
+
+[dependencies]
+eo-archives = { path = "../eo-archives" }
+eo-rom = { path = "../eo-rom" }
+eo-untold = { path = "../eo-untold" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "eo-texrip-cli"
+path = "src/bin/eo-texrip-cli.rs"
