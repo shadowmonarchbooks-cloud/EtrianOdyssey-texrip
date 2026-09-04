@@ -43,12 +43,17 @@ fn run() -> Result<(), Box<dyn Error>> {
     let bytes = fs::read(&source)?;
     let rom = NativeRom::detect(&bytes)?;
     let inventory = inventory_reader(&rom, ExtractionBudget::default())?;
-    let report = export_inventory(&inventory.assets, &inventory.issues, &output, ExtractionIdentity {
-        profile_id: inventory.profile_id.clone(),
-        game_id: format!("{:?}", inventory.game_id),
-        title_id: inventory.title_id.clone(),
-        product_code: inventory.product_code.clone(),
-    })?;
+    let report = export_inventory(
+        &inventory.assets,
+        &inventory.issues,
+        &output,
+        ExtractionIdentity {
+            profile_id: inventory.profile_id.clone(),
+            game_id: format!("{:?}", inventory.game_id),
+            title_id: inventory.title_id.clone(),
+            product_code: inventory.product_code.clone(),
+        },
+    )?;
 
     println!("EO-TexRip native extraction complete");
     println!("  Game profile: {}", report.profile_id);
@@ -203,9 +208,10 @@ fn safe_filename_component(value: &str) -> String {
     let mut output = String::new();
     let mut previous_separator = false;
     for ch in value.chars().take(96) {
-        let mapped = if ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            '_'
-        } else if ch.is_whitespace() {
+        let mapped = if ch.is_control()
+            || ch.is_whitespace()
+            || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        {
             '_'
         } else {
             ch
@@ -244,7 +250,11 @@ fn is_windows_reserved_name(value: &str) -> bool {
     }
     if stem.len() == 4 {
         let (prefix, number) = stem.split_at(3);
-        return matches!(prefix, "COM" | "LPT") && matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
+        return matches!(prefix, "COM" | "LPT")
+            && matches!(
+                number,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+            );
     }
     false
 }
@@ -257,7 +267,10 @@ fn encode_png_rgba8(width: u32, height: u32, rgba8: &[u8]) -> io::Result<Vec<u8>
         ));
     }
     let row_bytes = usize::try_from(u64::from(width) * 4).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "PNG row size exceeds address space")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "PNG row size exceeds address space",
+        )
     })?;
     let expected = row_bytes.checked_mul(height as usize).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "PNG pixel size overflow")
@@ -360,9 +373,7 @@ mod tests {
 
     #[test]
     fn png_writer_emits_rgba8_scanlines_in_a_valid_container() {
-        let rgba = [
-            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-        ];
+        let rgba = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
         let png = encode_png_rgba8(2, 1, &rgba).unwrap();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 
@@ -377,9 +388,8 @@ mod tests {
         assert_eq!(ihdr_crc, crc32(&png[12..29]));
 
         let idat_offset = 33;
-        let idat_len = u32::from_be_bytes(
-            png[idat_offset..idat_offset + 4].try_into().unwrap(),
-        ) as usize;
+        let idat_len =
+            u32::from_be_bytes(png[idat_offset..idat_offset + 4].try_into().unwrap()) as usize;
         assert_eq!(&png[idat_offset + 4..idat_offset + 8], b"IDAT");
         let idat = &png[idat_offset + 8..idat_offset + 8 + idat_len];
         assert_eq!(&idat[..2], &[0x78, 0x01]);
