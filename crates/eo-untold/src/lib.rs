@@ -429,7 +429,7 @@ fn expand_single_archive_stage(
     while cursor < searchable.len() {
         let file = searchable[cursor].clone();
         cursor += 1;
-        if !archive_probe(flavor, &file.data) || !processed.insert(path_key(&file.path)) {
+        if !archive_discovered(flavor, &file) || !processed.insert(path_key(&file.path)) {
             continue;
         }
         let nested = expand_single_archive(file, flavor, state);
@@ -440,10 +440,13 @@ fn expand_single_archive_stage(
     output
 }
 
-fn archive_probe(flavor: ArchiveFlavor, data: &[u8]) -> bool {
+fn archive_discovered(flavor: ArchiveFlavor, file: &VirtualFile) -> bool {
     match flavor {
-        ArchiveFlavor::Farc => FarcParser.probe(data),
-        ArchiveFlavor::Epl => EplParser.probe(data),
+        // Frozen find_farc_files() discovers by four-byte magic before parsing.
+        ArchiveFlavor::Farc => file.data.get(..4) == Some(b"FARC"),
+        // Frozen find_epl_files() is deliberately extension-only; malformed .epl
+        // files still count as discovered archives and then surface a parse error.
+        ArchiveFlavor::Epl => has_extension(&file.path, "epl"),
     }
 }
 
@@ -477,24 +480,27 @@ fn expand_single_archive(
     }
 
     let mut nested = Vec::new();
+    let mut used_names = BTreeSet::<String>::new();
     for member in &inventory.members {
-        let name = member
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("unnamed_{:05}.bin", member.index));
-        let Some(path) = safe_child_path(&file.path, &name) else {
-            continue;
-        };
         let result = match flavor {
             ArchiveFlavor::Farc => FarcParser.read_member(&file.data, member, state.budget),
             ArchiveFlavor::Epl => EplParser.read_member(&file.data, member, state.budget),
         };
         match result {
-            Ok(data) => nested.push(VirtualFile {
-                path,
-                data,
-                depth: file.depth.saturating_add(1),
-            }),
+            Ok(data) => {
+                let name = archive_output_name(
+                    flavor,
+                    member.index,
+                    member.name.as_deref(),
+                    &data,
+                    &mut used_names,
+                );
+                nested.push(VirtualFile {
+                    path: flat_child_path(&file.path, &name),
+                    data,
+                    depth: file.depth.saturating_add(1),
+                });
+            }
             Err(error) => state.issue(&file.path, "archive_member", error),
         }
     }
@@ -504,6 +510,173 @@ fn expand_single_archive(
         ArchiveFlavor::Epl => state.summary.epl_files += nested.len() as u64,
     }
     nested
+}
+
+fn archive_output_name(
+    flavor: ArchiveFlavor,
+    index: u64,
+    original_name: Option<&str>,
+    payload: &[u8],
+    used_names: &mut BTreeSet<String>,
+) -> String {
+    match flavor {
+        ArchiveFlavor::Farc => {
+            let mut name = match original_name {
+                Some(value) => farc_safe_component(value),
+                None => format!("hash_00000000_{index:05}{}", farc_guess_suffix(payload)),
+            };
+            if original_name.is_some() && extension(&name).is_none() {
+                name.push_str(farc_guess_suffix(payload));
+            }
+            unique_farc_name(name, used_names)
+        }
+        ArchiveFlavor::Epl => {
+            let fallback = format!("member_{index:04}");
+            let mut base = epl_safe_name(original_name.unwrap_or(""), &fallback);
+            let suffix = epl_guess_suffix(payload, &base);
+            let existing = extension(&base)
+                .map(|ext| format!(".{}", ext.to_ascii_lowercase()))
+                .unwrap_or_default();
+            if existing != suffix {
+                base.push_str(&suffix);
+            }
+            format!("{index:04}_{base}")
+        }
+    }
+}
+
+fn farc_safe_component(value: &str) -> String {
+    let replaced = value.replace(['\\', '/'], "_");
+    let trimmed = replaced.trim().trim_matches('.');
+    let mut mapped = String::new();
+    for ch in trimmed.chars() {
+        if ch <= '\u{1f}' || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*') {
+            mapped.push('_');
+        } else {
+            mapped.push(ch);
+        }
+    }
+
+    let mut collapsed = String::new();
+    let mut whitespace = false;
+    for ch in mapped.chars() {
+        if ch.is_whitespace() {
+            if !whitespace && !collapsed.is_empty() {
+                collapsed.push(' ');
+            }
+            whitespace = true;
+        } else {
+            collapsed.push(ch);
+            whitespace = false;
+        }
+    }
+    let value = collapsed.trim().chars().take(180).collect::<String>();
+    if value.is_empty() {
+        "unnamed".to_owned()
+    } else {
+        value
+    }
+}
+
+fn farc_guess_suffix(payload: &[u8]) -> &'static str {
+    if payload.get(..4) == Some(b"BCH\0")
+        || contains_magic(prefix(payload, WRAPPED_BCH_PROBE_BYTES), b"BCH\0")
+    {
+        ".bchbin"
+    } else if payload.get(..4) == Some(b"STEX") {
+        ".stex"
+    } else if payload.get(..4) == Some(b"FARC") {
+        ".farc"
+    } else if payload.get(..4) == Some(b"SIR0") {
+        ".sir0"
+    } else if payload.get(..4) == Some(b"CGFX") {
+        ".cgfx"
+    } else if payload.get(..4) == Some(b"CTPK") {
+        ".ctpk"
+    } else {
+        ".bin"
+    }
+}
+
+fn unique_farc_name(name: String, used_names: &mut BTreeSet<String>) -> String {
+    if used_names.insert(name.clone()) {
+        return name;
+    }
+    let (stem, suffix) = split_filename_suffix(&name);
+    for number in 2u32.. {
+        let candidate = format!("{stem}_{number}{suffix}");
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("u32 filename suffix space exhausted")
+}
+
+fn epl_safe_name(value: &str, fallback: &str) -> String {
+    let normalized = value.replace('\\', "/");
+    let leaf = normalized.rsplit('/').next().unwrap_or("").trim();
+    let mut mapped = String::with_capacity(leaf.len());
+    for ch in leaf.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '@' | '+' | '-') {
+            mapped.push(ch);
+        } else {
+            mapped.push('_');
+        }
+    }
+    let value = mapped
+        .trim_matches(|ch| matches!(ch, '.' | '_'))
+        .chars()
+        .take(120)
+        .collect::<String>();
+    if value.is_empty() {
+        fallback.to_owned()
+    } else {
+        value
+    }
+}
+
+fn epl_guess_suffix(payload: &[u8], original_name: &str) -> String {
+    let suffix = if payload.get(..4) == Some(b"STEX") {
+        Some(".stex")
+    } else if payload.get(..4) == Some(b"CGFX") {
+        Some(".cgfx")
+    } else if payload.get(..4) == Some(b"BCH\0") {
+        Some(".bch")
+    } else if payload.get(..4) == Some(b"ATBC") {
+        Some(".bam")
+    } else if payload.get(..4) == Some(b"CTPK") {
+        Some(".ctpk")
+    } else if matches!(payload.get(..4), Some(b"CTXB") | Some(b"ctxb")) {
+        Some(".ctxb")
+    } else if payload.get(..4) == Some(b"FARC") {
+        Some(".farc")
+    } else if payload.starts_with(b"EPL") {
+        Some(".epl")
+    } else {
+        None
+    };
+    if let Some(suffix) = suffix {
+        return suffix.to_owned();
+    }
+    if let Some(ext) = extension(original_name) {
+        let suffix = format!(".{}", ext.to_ascii_lowercase());
+        if suffix.len() <= 12 {
+            return suffix;
+        }
+    }
+    ".bin".to_owned()
+}
+
+fn split_filename_suffix(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(index) if index > 0 => (&name[..index], &name[index..]),
+        _ => (name, ""),
+    }
+}
+
+fn flat_child_path(parent: &str, child: &str) -> String {
+    let parent = normalize_virtual_path(parent);
+    format!("{}/{}", parent.trim_end_matches('/'), child)
 }
 
 fn inventory_file(file: &VirtualFile, state: &mut ScanState) {
@@ -1249,7 +1422,7 @@ mod tests {
     }
 
     #[test]
-    fn unsafe_archive_member_is_not_counted_as_written_or_scanned() {
+    fn farc_member_names_are_flattened_and_scanned_like_frozen_unpacker() {
         let outer_farc = farc_with_member("../escape.stex", &stex_a8(0x77));
         let rom = FakeRom {
             hint: eou1_hint(),
@@ -1257,10 +1430,39 @@ mod tests {
         };
         let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
         assert_eq!(inventory.summary.farc_archives, 1);
+        assert_eq!(inventory.summary.farc_files, 1);
+        assert_eq!(inventory.summary.strict_candidate_files, 1);
+        assert_eq!(inventory.summary.stex_files, 1);
+        assert_eq!(inventory.assets.len(), 1);
+        assert!(inventory.issues.is_empty());
+    }
+
+    #[test]
+    fn malformed_epl_extension_is_discovered_before_parse_failure() {
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("broken.epl".to_owned(), vec![0u8; 64])]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.epl_archives, 1);
+        assert_eq!(inventory.summary.epl_files, 0);
+        assert_eq!(inventory.summary.strict_candidate_files, 0);
+        assert_eq!(inventory.issues.len(), 1);
+        assert_eq!(inventory.issues[0].stage, "archive_inspect");
+    }
+
+    #[test]
+    fn malformed_farc_magic_is_discovered_before_parse_failure() {
+        let rom = FakeRom {
+            hint: eou1_hint(),
+            files: BTreeMap::from([("broken.bin".to_owned(), b"FARCbad".to_vec())]),
+        };
+        let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+        assert_eq!(inventory.summary.farc_archives, 1);
         assert_eq!(inventory.summary.farc_files, 0);
         assert_eq!(inventory.summary.strict_candidate_files, 0);
-        assert!(inventory.assets.is_empty());
-        assert!(inventory.issues.is_empty());
+        assert_eq!(inventory.issues.len(), 1);
+        assert_eq!(inventory.issues[0].stage, "archive_inspect");
     }
 
     #[test]
