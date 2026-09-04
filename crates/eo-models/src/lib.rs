@@ -31,6 +31,9 @@ pub struct MaterialRecord {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelInventory {
+    /// Exact structural model count reported by the container format.
+    pub model_count: u32,
+    /// Convenience name when the payload has one unambiguous model identity.
     pub model_name: Option<String>,
     pub materials: Vec<MaterialRecord>,
 }
