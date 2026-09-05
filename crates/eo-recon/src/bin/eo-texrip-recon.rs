@@ -39,9 +39,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     fs::write(&output, json)?;
 
     println!(
-        "{} reconnaissance complete: {} RomFS files, report {}",
+        "{} reconnaissance complete: {} RomFS files, {} HPI members, {} EPL members, report {}",
         report.profile_id,
         report.romfs_files,
+        report.archives.hpi_members,
+        report.archives.epl_members,
         output.display()
     );
     Ok(())
