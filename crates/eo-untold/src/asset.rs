@@ -17,9 +17,12 @@ pub struct ParityAsset {
     /// Virtual ROM/archive source retained only for local extraction output.
     #[serde(skip)]
     pub source: String,
-    /// Container-provided texture name retained only for local extraction output.
+    /// Primary container-provided texture name retained only for local extraction output.
     #[serde(skip)]
     pub internal_name: String,
+    /// All container-provided names that resolve to this deduped pixel payload.
+    #[serde(skip)]
+    internal_names: BTreeSet<String>,
     /// Tightly packed RGBA8 pixels retained only in memory for native export.
     #[serde(skip)]
     pub rgba8: Vec<u8>,
@@ -41,6 +44,10 @@ impl ParityAsset {
         let decoded = NativePicaDecoder
             .decode_base_level(encoded)
             .expect("scan validates texture decoding before publishing an asset");
+        let mut internal_names = BTreeSet::new();
+        if !internal_name.is_empty() {
+            internal_names.insert(internal_name.to_owned());
+        }
         Self {
             candidate_hash: cityhash64_hex(payload),
             verified_hashes: Vec::new(),
@@ -53,6 +60,7 @@ impl ParityAsset {
             material_binding_count: binding_keys.len() as u64,
             source: source.to_owned(),
             internal_name: internal_name.to_owned(),
+            internal_names,
             rgba8: decoded.rgba8,
             binding_keys,
         }
@@ -61,6 +69,14 @@ impl ParityAsset {
     pub(crate) fn merge_bindings(&mut self, keys: impl IntoIterator<Item = String>) {
         self.binding_keys.extend(keys);
         self.material_binding_count = self.binding_keys.len() as u64;
+    }
+
+    pub(crate) fn merge_internal_names(&mut self, names: impl IntoIterator<Item = String>) {
+        self.internal_names.extend(names.into_iter().filter(|name| !name.is_empty()));
+    }
+
+    pub(crate) fn internal_names(&self) -> impl Iterator<Item = &str> {
+        self.internal_names.iter().map(String::as_str)
     }
 
     #[cfg(test)]
@@ -88,8 +104,18 @@ impl ParityAsset {
             material_binding_count,
             source: String::new(),
             internal_name: String::new(),
+            internal_names: BTreeSet::new(),
             rgba8: Vec::new(),
             binding_keys,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_internal_name(&mut self, name: &str) {
+        self.internal_name = name.to_owned();
+        self.internal_names.clear();
+        if !name.is_empty() {
+            self.internal_names.insert(name.to_owned());
         }
     }
 }
@@ -107,6 +133,7 @@ pub(crate) fn dedupe_assets(assets: Vec<ParityAsset>) -> Vec<ParityAsset> {
         if let Some(index) = by_key.get(&key).copied() {
             let target = &mut output[index];
             target.merge_bindings(asset.binding_keys);
+            target.merge_internal_names(asset.internal_names);
             for hash in asset.verified_hashes {
                 if !target.verified_hashes.contains(&hash) {
                     target.verified_hashes.push(hash);
@@ -128,9 +155,9 @@ pub(crate) fn bind_external_texture_names(
 ) {
     let mut assets_by_name = BTreeMap::<String, Vec<usize>>::new();
     for (index, asset) in assets.iter().enumerate() {
-        if !asset.internal_name.is_empty() {
+        for name in asset.internal_names() {
             assets_by_name
-                .entry(asset.internal_name.clone())
+                .entry(name.to_owned())
                 .or_default()
                 .push(index);
         }
@@ -231,13 +258,45 @@ mod tests {
     #[test]
     fn dedupe_matches_legacy_hash_format_dimension_identity() {
         let mut a = ParityAsset::test_fixture("A", 8, 8, 0, "first", "ui", 1);
-        a.internal_name = "same".to_owned();
+        a.set_internal_name("same");
         let mut b = ParityAsset::test_fixture("A", 8, 8, 0, "second", "misc", 2);
-        b.internal_name = "same".to_owned();
+        b.set_internal_name("same");
         let deduped = dedupe_assets(vec![a, b]);
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0].parser_used, "first");
         assert_eq!(deduped[0].category, "ui");
         assert_eq!(deduped[0].material_binding_count, 2);
+    }
+
+    #[test]
+    fn dedupe_preserves_distinct_names_for_identical_pixels() {
+        let mut a = ParityAsset::test_fixture("A", 8, 8, 0, "first", "ui", 0);
+        a.set_internal_name("day_sky");
+        let mut b = ParityAsset::test_fixture("A", 8, 8, 0, "second", "misc", 0);
+        b.set_internal_name("night_sky");
+
+        let deduped = dedupe_assets(vec![a, b]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped[0].internal_names().collect::<Vec<_>>(),
+            vec!["day_sky", "night_sky"]
+        );
+    }
+
+    #[test]
+    fn external_binding_can_resolve_through_deduped_alias() {
+        let mut a = ParityAsset::test_fixture("A", 8, 8, 0, "first", "ui", 0);
+        a.set_internal_name("day_sky");
+        let mut b = ParityAsset::test_fixture("A", 8, 8, 0, "second", "misc", 0);
+        b.set_internal_name("night_sky");
+        let mut assets = dedupe_assets(vec![a, b]);
+        let bindings = BTreeMap::from([(
+            "night_sky".to_owned(),
+            BTreeSet::from(["material-slot".to_owned()]),
+        )]);
+
+        bind_external_texture_names(&mut assets, &bindings);
+        assert_eq!(assets[0].material_binding_count, 1);
+        assert!(assets[0].binding_keys.contains("material-slot"));
     }
 }
