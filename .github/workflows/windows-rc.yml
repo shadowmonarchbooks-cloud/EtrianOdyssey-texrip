@@ -45,6 +45,9 @@ jobs:
       - name: Build desktop app
         run: cargo build --release -p eo-texrip-desktop --bin EO-TexRip
 
+      - name: Build coverage auditor
+        run: cargo build --release -p eo-extract --bin eo-texrip-coverage-audit
+
       - name: Package RC
         shell: pwsh
         env:
@@ -55,6 +58,7 @@ jobs:
           $stage = Join-Path 'dist' $folderName
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item 'target\release\EO-TexRip.exe' (Join-Path $stage 'EO-TexRip.exe')
+          Copy-Item 'target\release\eo-texrip-coverage-audit.exe' (Join-Path $stage 'EO-TexRip-Coverage-Audit.exe')
           Copy-Item 'app\desktop\RELEASE_CANDIDATE.md' (Join-Path $stage 'README.txt')
           Copy-Item 'THIRD_PARTY.md' (Join-Path $stage 'THIRD_PARTY.txt')
           $zip = Join-Path 'dist' "$folderName.zip"
