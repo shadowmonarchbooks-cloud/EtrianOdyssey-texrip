@@ -1,54 +1,54 @@
-# EO-TexRip 0.60.0-rc.4
+# EO-TexRip 0.60.0-rc.5
 
-This is the fourth Windows desktop release candidate for the native Rust extractor. RC4 keeps the RC3 extraction behavior and adds an independent read-only coverage auditor so the final Untold completeness claim can be based on declared texture structures, not only successful extraction counts.
+This is the fifth Windows desktop release candidate for the native Rust extractor. RC5 fixes the single EOU1 structural coverage gap exposed by the RC4 coverage audit. EO2U's RC4 audit already passed cleanly and does not require another coverage run for this change.
 
-## What changed since RC3
+## What changed since RC4
 
-- Adds `EO-TexRip-Coverage-Audit.exe`, a read-only audit executable packaged beside the desktop GUI.
-- The auditor runs the production native inventory and then independently rescans the same decrypted ROM for structural coverage.
-- CGFX coverage is checked against the top-level DATA texture dictionary rather than trusting only successfully parsed image TXOB objects.
-- CGFX texture object types are classified explicitly, including image (`0x20000011`), cube (`0x20000009`), reference, procedural, shadow, and unknown TXOB types.
-- BCH/H3D coverage compares the declared texture-section count, resolvable descriptor pointers, and successfully parsed descriptors.
-- BCH texture command streams are checked for additional cube-map face addresses (`GPUREG_TEXUNIT0_ADDR2` through `ADDR6`).
-- Archive expansion is independently repeated to a fixed point and reports cross-family nesting that the production HPI -> FARC -> EPL stage order would not revisit.
-- The auditor uses a broader embedded-CGFX discovery probe and reports a valid payload found in a top-level RomFS file that the production selector would not read.
-- Known unsupported texture-capable CTPK, CTXB, and CMB candidates are explicit audit failures rather than silently ignored coverage.
-- No decoded PNG, native texture hash, Azahar `pack.json`, output naming, or normal extraction behavior is intentionally changed from RC3.
+- Production strict scanning now recognizes structurally valid embedded CGFX payloads in already-selected files, instead of requiring CGFX to begin at byte 0 or appear through the ATBC special case.
+- The scanner continues to validate the CGFX header/endian marker and declared extent; it does not fall back to unvalidated raw `CGFX` magic matching.
+- Adds a regression test for an extension-selected `.bcmdl` containing wrapped/embedded CGFX evidence.
+- RC4's independent EOU1 audit found 504 valid CGFX payloads with 1,659 ordinary image TXOBs, while production inventoried 503 payloads and 1,657 texture descriptors. This change targets exactly that one-payload/two-descriptor gap.
+- RC4's EO2U audit passed: all 1,165 declared BCH texture entries resolved and parsed, all 6,148 STEX files parsed, and no cube-map, unsupported-container, or archive-order coverage gaps were reported.
+- No EO2U extraction behavior is intentionally changed.
+- No texture decoder, PNG encoder, native texture hash, Azahar `pack.json` format, or output naming rule is intentionally changed. EOU1 may now emit up to two additional deduplicated outputs because two previously skipped raw CGFX descriptors will be scanned; the final after-dedupe count is not assumed in advance.
 
-## What RC3 established
+## Why RC5 exists
 
-Fresh real smoke tests remained stable at 2,279 EOU1 textures and 2,884 EO2U textures. The former missing-material diagnostics disappeared: EOU1 retained one name ambiguity and EO2U retained 35 name ambiguities, but neither report contained a material texture that was referenced and absent from all decoded assets. Neither report showed `texture_decode` or unsupported-container failures.
+RC3 removed all apparent missing-material-reference diagnostics, but that did not prove physical texture completeness. RC4 added an independent structural auditor. The first real RC4 audit proved EO2U complete and found one narrow EOU1 discrepancy: one valid CGFX payload with two ordinary image textures was visible to the auditor but never reached the production strict scan gate.
 
-Those results are strong evidence, but they do not by themselves prove every declared texture object was parsed. RC4 exists to close that remaining structural-audit gap.
+The production parser could already parse embedded CGFX once `scan_payload` ran. RC5 changes only the gate deciding whether an already-selected candidate reaches that parser.
 
 ## Run the normal extractor
 
 1. Unzip the release archive.
 2. Run `EO-TexRip.exe`.
-3. Browse for a user-owned decrypted/cleartext EOU1 or EO2U ROM, or drag the ROM onto the app window.
+3. Browse for a user-owned decrypted/cleartext EOU1 ROM, or drag the ROM onto the app window.
 4. Choose the output folder or keep the suggested folder beside the ROM.
 5. Click **Extract Textures**.
-6. Use **Open Output Folder** when extraction finishes.
+6. Keep the generated `extraction-report.json` for the final comparison.
+
+EO2U does not need to be re-extracted solely for the RC5 coverage fix.
 
 ## Run the coverage audit
 
-Open Command Prompt or PowerShell in the unzipped RC4 folder and run:
+Open Command Prompt or PowerShell in the unzipped RC5 folder and run:
 
-`EO-TexRip-Coverage-Audit.exe "C:\path\to\your\decrypted-rom.3ds"`
+`EO-TexRip-Coverage-Audit.exe "C:\path\to\your\decrypted-eou1-rom.3ds"`
 
-The auditor does not extract game assets. It writes a JSON report beside the ROM named like `<rom-name>-coverage-audit.json` unless a second output path is supplied.
+The auditor is read-only with respect to game assets. It writes a JSON report beside the ROM named like `<rom-name>-coverage-audit.json` unless a second output path is supplied.
 
-Run it once for EOU1 and once for EO2U. A clean structural result has `coverage_complete: true` and an empty `audit_issues` array. Important counters include:
+For RC5, rerun the coverage audit for **EOU1 only**. The expected structural pass is:
 
-- CGFX top-level textures declared vs image textures successfully parsed;
-- CGFX cube/unknown texture object counts;
-- BCH texture entries declared vs pointers resolved vs entries parsed;
-- BCH cube-map texture/face counts;
-- independently discovered CGFX/BCH payload counts vs the production extractor inventory;
-- cross-family archive candidates;
-- known unsupported texture-container candidates.
+- `coverage_complete: true`;
+- an empty `audit_issues` array;
+- production and independent CGFX payload counts both 504;
+- production `texture_descriptors_found` / `decoded_3d_textures` accounting for the two previously skipped descriptors if both decode successfully;
+- 1,659 independently declared image TXOBs and 1,659 successfully parsed image textures;
+- zero cube/unknown CGFX texture objects;
+- zero unsupported texture containers;
+- zero cross-family archive candidates.
 
-If either report is not clean, keep the report: the issue entries are designed to identify the exact source and coverage class that still needs engineering work.
+Do not assume the final exported EOU1 texture count will be 2,281: pixel-identical textures can deduplicate, so the after-dedupe increase may be zero, one, or two even when both raw descriptors are now decoded.
 
 ## Azahar custom textures
 
@@ -62,8 +62,13 @@ If either report is not clean, keep the report: the issue entries are designed t
 - Inputs must already be decrypted/cleartext. EO-TexRip does not include, download, or obtain Nintendo keys.
 - EOU1 and EO2U are the intended 0.60 game targets.
 - The coverage auditor is deliberately diagnostic: it does not write decoded textures or proprietary game data.
-- Material-animation texture-name tables remain relevant to runtime binding semantics, but physical texture completeness is determined here from declared texture objects/sections and archive/container reachability. Any surviving binding ambiguity remains a separate resolver-quality issue rather than evidence that pixel data is absent.
+- Material-name ambiguities remain a separate resolver-quality issue. They do not by themselves indicate missing physical texture data.
 
-## What to send for the final coverage audit
+## What to send for the final EOU1 coverage check
 
-Do not upload ROMs or extracted game assets. Send only the two generated `*-coverage-audit.json` files, one for EOU1 and one for EO2U. If we later test Azahar replacement behavior, `pack.json` and a short relevant Azahar log excerpt are also safe and useful.
+Do not upload ROMs or extracted game assets. Send only:
+
+- the RC5 EOU1 `*-coverage-audit.json`;
+- the RC5 EOU1 `extraction-report.json`.
+
+If the EOU1 coverage report is clean and the normal extraction report introduces no new decode/missing/unsupported failure, physical texture completeness will be established for both Untold titles. The remaining product-level 0.60 gate is then the visible Azahar custom-texture replacement smoke test.
