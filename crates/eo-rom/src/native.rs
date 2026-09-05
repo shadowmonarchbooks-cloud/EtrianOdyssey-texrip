@@ -42,26 +42,34 @@ impl<'a> NativeRom<'a> {
     }
 
     fn read_romfs_entry(&self, target: &str) -> Result<Vec<u8>, RomError> {
+        self.read_romfs_entry_prefix(target, usize::MAX)
+    }
+
+    fn read_romfs_entry_prefix(
+        &self,
+        target: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, RomError> {
         match self {
             Self::Ncsd(image) => {
                 let ncch = primary_ncch(image)?;
                 let romfs_data = ncch
                     .romfs_bytes()?
                     .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
-                read_from_romfs(romfs_data, target)
+                read_from_romfs_prefix(romfs_data, target, max_bytes)
             }
             Self::Cia(image) => {
                 let ncch = primary_cia_ncch(image)?;
                 let romfs_data = ncch
                     .romfs_bytes()?
                     .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
-                read_from_romfs(romfs_data, target)
+                read_from_romfs_prefix(romfs_data, target, max_bytes)
             }
             Self::Ncch(image) => {
                 let romfs_data = image
                     .romfs_bytes()?
                     .ok_or_else(|| RomError::MissingEntry("RomFS".to_owned()))?;
-                read_from_romfs(romfs_data, target)
+                read_from_romfs_prefix(romfs_data, target, max_bytes)
             }
             Self::RomFs(image) => {
                 let entry = image
@@ -69,7 +77,7 @@ impl<'a> NativeRom<'a> {
                     .into_iter()
                     .find(|entry| entry.virtual_path == target)
                     .ok_or_else(|| RomError::MissingEntry(target.to_owned()))?;
-                Ok(image.read_entry(&entry)?.to_vec())
+                Ok(prefix_bytes(image.read_entry(&entry)?, max_bytes))
             }
         }
     }
@@ -137,6 +145,14 @@ impl RomReader for NativeRom<'_> {
     fn read_entry(&self, virtual_path: &str) -> Result<Vec<u8>, RomError> {
         self.read_romfs_entry(virtual_path)
     }
+
+    fn read_entry_prefix(
+        &self,
+        virtual_path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, RomError> {
+        self.read_romfs_entry_prefix(virtual_path, max_bytes)
+    }
 }
 
 fn primary_ncch<'a>(image: &NcsdImage<'a>) -> Result<NcchImage<'a>, RomError> {
@@ -194,14 +210,22 @@ fn identity_from_ncch(header: &NcchHeader) -> Result<RomIdentityHint, RomError> 
     })
 }
 
-fn read_from_romfs(data: &[u8], target: &str) -> Result<Vec<u8>, RomError> {
+fn read_from_romfs_prefix(
+    data: &[u8],
+    target: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, RomError> {
     let romfs = RomFsImage::parse(data)?;
     let entry = romfs
         .entries()?
         .into_iter()
         .find(|entry| entry.virtual_path == target)
         .ok_or_else(|| RomError::MissingEntry(target.to_owned()))?;
-    Ok(romfs.read_entry(&entry)?.to_vec())
+    Ok(prefix_bytes(romfs.read_entry(&entry)?, max_bytes))
+}
+
+fn prefix_bytes(data: &[u8], max_bytes: usize) -> Vec<u8> {
+    data[..data.len().min(max_bytes)].to_vec()
 }
 
 #[cfg(test)]
@@ -370,6 +394,10 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].virtual_path, "data/test.bin");
         assert_eq!(rom.read_entry("data/test.bin").unwrap(), b"EO3D");
+        assert_eq!(
+            rom.read_entry_prefix("data/test.bin", 2).unwrap(),
+            b"EO"
+        );
     }
 
     #[test]
@@ -382,5 +410,9 @@ mod tests {
         assert_eq!(hint.title_id.unwrap().to_string(), "00040000000EC700");
         assert_eq!(hint.product_code.as_deref(), Some("CTR-P-BSK-USA"));
         assert_eq!(rom.read_entry("data/test.bin").unwrap(), b"EO3D");
+        assert_eq!(
+            rom.read_entry_prefix("data/test.bin", 3).unwrap(),
+            b"EO3"
+        );
     }
 }

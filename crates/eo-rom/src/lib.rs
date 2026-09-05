@@ -82,6 +82,20 @@ pub trait RomReader {
     fn identity_hint(&self) -> Result<RomIdentityHint, RomError>;
     fn entries(&self) -> Result<Vec<RomEntry>, RomError>;
     fn read_entry(&self, virtual_path: &str) -> Result<Vec<u8>, RomError>;
+
+    /// Read at most `max_bytes` from the start of one virtual file.
+    ///
+    /// The default preserves compatibility for custom readers. Native readers
+    /// override this so discovery probes allocate only the requested prefix.
+    fn read_entry_prefix(
+        &self,
+        virtual_path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, RomError> {
+        let mut data = self.read_entry(virtual_path)?;
+        data.truncate(max_bytes);
+        Ok(data)
+    }
 }
 
 #[cfg(test)]

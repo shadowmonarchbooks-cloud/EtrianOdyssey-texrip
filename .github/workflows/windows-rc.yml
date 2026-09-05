@@ -1,0 +1,105 @@
+name: Windows release candidate
+
+on:
+  push:
+    branches:
+      - 'milestone/0.60-untold-parity'
+    paths:
+      - 'Cargo.toml'
+      - 'crates/eo-extract/**'
+      - 'crates/eo-untold/**'
+      - 'app/desktop/**'
+      - '.github/workflows/windows-rc.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-rc-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-rc:
+    name: Build Windows RC
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: rustup show
+
+      - name: Resolve RC version
+        id: rc
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $marker = (Get-Content 'app\desktop\RC_READY' -Raw).Trim()
+          if ($marker -notmatch '^EO-TexRip (?<version>\d+\.\d+\.\d+-rc\.\d+) release candidate build marker\.$') {
+            throw "Invalid RC_READY marker: $marker"
+          }
+          $version = $Matches.version
+          $folder = "EO-TexRip-$version-windows-x64"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "folder=$folder" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Test reusable extraction layer
+        run: cargo test -p eo-extract --all-targets
+
+      - name: Build desktop app
+        run: cargo build --release -p eo-texrip-desktop --bin EO-TexRip
+
+      - name: Build coverage auditor
+        run: cargo build --release -p eo-extract --bin eo-texrip-coverage-audit
+
+      - name: Package RC
+        shell: pwsh
+        env:
+          RC_FOLDER: ${{ steps.rc.outputs.folder }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folderName = $env:RC_FOLDER
+          $stage = Join-Path 'dist' $folderName
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item 'target\release\EO-TexRip.exe' (Join-Path $stage 'EO-TexRip.exe')
+          Copy-Item 'target\release\eo-texrip-coverage-audit.exe' (Join-Path $stage 'EO-TexRip-Coverage-Audit.exe')
+          Copy-Item 'app\desktop\RELEASE_CANDIDATE.md' (Join-Path $stage 'README.txt')
+          Copy-Item 'THIRD_PARTY.md' (Join-Path $stage 'THIRD_PARTY.txt')
+          $zip = Join-Path 'dist' "$folderName.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $folderName.zip" | Set-Content -Encoding ascii "$zip.sha256"
+
+      - name: Upload RC artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.rc.outputs.folder }}
+          path: |
+            dist/${{ steps.rc.outputs.folder }}.zip
+            dist/${{ steps.rc.outputs.folder }}.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub prerelease
+        if: ${{ github.event.head_commit.message == format('Release {0}', steps.rc.outputs.version) }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_VERSION: ${{ steps.rc.outputs.version }}
+          RC_FOLDER: ${{ steps.rc.outputs.folder }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:RC_VERSION"
+          $zip = "dist\$env:RC_FOLDER.zip"
+          $checksum = "$zip.sha256"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete $tag --cleanup-tag -y
+          }
+          gh release create $tag `
+            $zip `
+            $checksum `
+            --target $env:GITHUB_SHA `
+            --title "EO-TexRip $env:RC_VERSION" `
+            --prerelease `
+            --notes-file 'app\desktop\RELEASE_CANDIDATE.md'

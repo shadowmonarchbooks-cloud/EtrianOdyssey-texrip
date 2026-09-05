@@ -1,16 +1,25 @@
-use crate::{MaterialRecord, ModelError, ModelInspector, ModelInventory, TextureReference};
+use crate::{
+    AlphaInput, AlphaStage, MaterialRecord, ModelError, ModelInspector, ModelInventory,
+    TextureReference,
+};
 use encoding_rs::SHIFT_JIS;
 use eo_core::TextureRole;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const BCH_MIN_SIZE: usize = 0x38;
 const SECTION_MODELS: usize = 0;
+const SECTION_MATERIAL_PARAMS: usize = 1;
 const MAX_MODELS: u32 = 1024;
+const MAX_MATERIAL_PARAMS: u32 = 4096;
 const MAX_MATERIALS: u32 = 2048;
 const MAX_COMMAND_WORDS: u32 = 0x4000;
 const MAX_STRING_BYTES: usize = 512;
 const MAX_EMBEDDED_BCH: usize = 16;
 const GPUREG_TEXUNIT_CONFIG: u16 = 0x0080;
+const GPUREG_TEXENV_SOURCE: [u16; 6] = [0x00c0, 0x00c8, 0x00d0, 0x00d8, 0x00f0, 0x00f8];
+const GPUREG_TEXENV_OPERAND: [u16; 6] = [0x00c1, 0x00c9, 0x00d1, 0x00d9, 0x00f1, 0x00f9];
+const GPUREG_TEXENV_COMBINER: [u16; 6] = [0x00c2, 0x00ca, 0x00d2, 0x00da, 0x00f2, 0x00fa];
+const GPUREG_FRAGOP_ALPHA_TEST: u16 = 0x0104;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BchModelInspector;
@@ -21,9 +30,18 @@ struct BchHeader {
     content_addr: u32,
     strings_addr: u32,
     commands_addr: u32,
+    data_addr: u32,
+    reloc_addr: u32,
     content_len: u32,
     strings_len: u32,
     commands_len: u32,
+    reloc_len: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Relocation {
+    flags: u8,
+    location: usize,
 }
 
 impl ModelInspector for BchModelInspector {
@@ -40,6 +58,16 @@ impl ModelInspector for BchModelInspector {
 fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
     let header = parse_header(data)?;
     let model_offsets = pointer_table_entries(data, &header, SECTION_MODELS, MAX_MODELS)?;
+    let model_count = model_offsets.len() as u32;
+    let mut params_starts = pointer_table_entries(
+        data,
+        &header,
+        SECTION_MATERIAL_PARAMS,
+        MAX_MATERIAL_PARAMS,
+    )?;
+    params_starts.sort_unstable();
+    params_starts.dedup();
+    let relocations = parse_relocations(data, &header);
     let mut model_names = Vec::new();
     let mut materials = Vec::new();
 
@@ -100,10 +128,21 @@ fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
                 });
             }
 
+            let params_start = material_params_start(data, &header, material_start, &params_starts);
+            let alpha_stages = fragment_alpha_stages(
+                data,
+                &header,
+                &relocations,
+                params_start,
+                &params_starts,
+            );
             materials.push(MaterialRecord {
                 index: materials.len() as u32,
+                model_index: model_index as u32,
+                model_material_index: local_index as u32,
                 name,
                 textures,
+                alpha_stages,
             });
         }
     }
@@ -116,6 +155,7 @@ fn inspect_bch_payload(data: &[u8]) -> Result<ModelInventory, ModelError> {
     };
 
     Ok(ModelInventory {
+        model_count,
         model_name,
         materials,
     })
@@ -209,9 +249,12 @@ fn parse_header(data: &[u8]) -> Result<BchHeader, ModelError> {
         content_addr,
         strings_addr,
         commands_addr,
+        data_addr,
+        reloc_addr,
         content_len,
         strings_len,
         commands_len,
+        reloc_len,
     })
 }
 
@@ -285,6 +328,35 @@ fn pointer_table_entries(
         }
     }
     Ok(entries)
+}
+
+fn parse_relocations(data: &[u8], header: &BchHeader) -> Vec<Relocation> {
+    if header.reloc_addr == 0 || header.reloc_len == 0 {
+        return Vec::new();
+    }
+    let start = header.reloc_addr as usize;
+    let end = start
+        .saturating_add(header.reloc_len as usize)
+        .min(data.len());
+    let mut relocations = Vec::new();
+    let mut position = start;
+    while position + 4 <= end {
+        let Some(value) = read_u32(data, position) else {
+            break;
+        };
+        let flags = (value >> 25) as u8;
+        let encoded = value & 0x01ff_ffff;
+        let location = if flags == 1 {
+            (header.content_addr as usize).checked_add(encoded as usize)
+        } else {
+            (header.content_addr as usize).checked_add((encoded as usize).saturating_mul(4))
+        };
+        if let Some(location) = location.filter(|value| *value <= data.len().saturating_sub(4)) {
+            relocations.push(Relocation { flags, location });
+        }
+        position += 4;
+    }
+    relocations
 }
 
 fn resolve_string(data: &[u8], header: &BchHeader, raw: u32) -> Option<String> {
@@ -366,6 +438,140 @@ fn model_material_table(
         .checked_add(count as usize * record_size)
         .filter(|end| *end <= data.len())?;
     Some((table, count, record_size))
+}
+
+fn material_params_start(
+    data: &[u8],
+    header: &BchHeader,
+    material_start: usize,
+    params_starts: &[usize],
+) -> Option<usize> {
+    let raw = read_u32(data, material_start)?;
+    let resolved = resolve_main_offset(raw, header, data.len())?;
+    if params_starts.is_empty() || params_starts.binary_search(&resolved).is_ok() {
+        return Some(resolved);
+    }
+    let raw = raw as usize;
+    params_starts.binary_search(&raw).ok().map(|_| raw)
+}
+
+fn main_object_end(start: usize, object_starts: &[usize], header: &BchHeader, data_len: usize) -> usize {
+    object_starts
+        .iter()
+        .copied()
+        .filter(|value| *value > start)
+        .chain(
+            [header.strings_addr, header.commands_addr, header.data_addr]
+                .into_iter()
+                .map(|value| value as usize)
+                .filter(|value| *value > start),
+        )
+        .chain(std::iter::once(data_len))
+        .min()
+        .unwrap_or(data_len)
+}
+
+fn fragment_alpha_stages(
+    data: &[u8],
+    header: &BchHeader,
+    relocations: &[Relocation],
+    params_start: Option<usize>,
+    params_starts: &[usize],
+) -> Vec<AlphaStage> {
+    let Some(params_start) = params_start else {
+        return Vec::new();
+    };
+    let params_end = main_object_end(params_start, params_starts, header, data.len());
+    let mut fragment = BTreeMap::<u16, u32>::new();
+    let mut seen = BTreeSet::<(usize, u32)>::new();
+
+    for relocation in relocations {
+        if relocation.flags != 2 || !(params_start <= relocation.location && relocation.location < params_end) {
+            continue;
+        }
+        let pointer_location = relocation.location;
+        let Some(raw_pointer) = read_u32(data, pointer_location) else {
+            continue;
+        };
+        let Some(word_count) = read_u32(data, pointer_location + 4) else {
+            continue;
+        };
+        if word_count == 0 || word_count > MAX_COMMAND_WORDS {
+            continue;
+        }
+        let relative_start = (header.commands_addr as usize).checked_add(raw_pointer as usize);
+        let command_start = relative_start
+            .filter(|start| header.commands_addr as usize <= *start && *start < data.len())
+            .or_else(|| ((raw_pointer as usize) < data.len()).then_some(raw_pointer as usize));
+        let Some(command_start) = command_start else {
+            continue;
+        };
+        let Some(command_end) = command_start.checked_add(word_count as usize * 4) else {
+            continue;
+        };
+        if command_start > data.len().saturating_sub(8) || command_end > data.len() {
+            continue;
+        }
+        if !seen.insert((command_start, word_count)) {
+            continue;
+        }
+        let registers = parse_gpu_commands(data, command_start, word_count);
+        if has_fragment_registers(&registers) {
+            fragment.extend(registers);
+        }
+    }
+    decode_alpha_stages(&fragment)
+}
+
+fn has_fragment_registers(registers: &BTreeMap<u16, u32>) -> bool {
+    GPUREG_TEXENV_SOURCE
+        .iter()
+        .chain(GPUREG_TEXENV_OPERAND.iter())
+        .chain(GPUREG_TEXENV_COMBINER.iter())
+        .chain(std::iter::once(&GPUREG_FRAGOP_ALPHA_TEST))
+        .any(|register| registers.contains_key(register))
+}
+
+fn decode_alpha_stages(registers: &BTreeMap<u16, u32>) -> Vec<AlphaStage> {
+    let mut stages = Vec::new();
+    for stage in 0..6usize {
+        let source_register = GPUREG_TEXENV_SOURCE[stage];
+        let combiner_register = GPUREG_TEXENV_COMBINER[stage];
+        if !registers.contains_key(&source_register) && !registers.contains_key(&combiner_register) {
+            continue;
+        }
+        let source = registers.get(&source_register).copied().unwrap_or(0);
+        let operand = registers
+            .get(&GPUREG_TEXENV_OPERAND[stage])
+            .copied()
+            .unwrap_or(0);
+        let combiner = registers.get(&combiner_register).copied().unwrap_or(0);
+        let combiner_id = ((combiner >> 16) & 0x0f) as u8;
+        let arity = combiner_arity(combiner_id);
+        let mut inputs = Vec::with_capacity(arity);
+        for input in 0..arity {
+            inputs.push(AlphaInput {
+                input: input as u8,
+                source_id: ((source >> (16 + input * 4)) & 0x0f) as u8,
+                operand_id: ((operand >> (12 + input * 4)) & 0x07) as u8,
+            });
+        }
+        stages.push(AlphaStage {
+            stage: stage as u8,
+            combiner_id,
+            inputs,
+        });
+    }
+    stages
+}
+
+fn combiner_arity(mode: u8) -> usize {
+    match mode {
+        0 => 1,
+        1 | 2 | 3 | 5 | 6 | 7 => 2,
+        4 | 8 | 9 => 3,
+        _ => 3,
+    }
 }
 
 fn material_texture_enablement(
@@ -478,6 +684,11 @@ mod tests {
         data[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
+    fn put_gpu_write(data: &mut [u8], offset: usize, parameter: u32, register: u16) {
+        put_u32(data, offset, parameter);
+        put_u32(data, offset + 4, u32::from(register));
+    }
+
     fn synthetic_bch_model() -> Vec<u8> {
         let mut data = vec![0u8; 0x400];
         data[..4].copy_from_slice(b"BCH\0");
@@ -488,18 +699,22 @@ mod tests {
         put_u32(&mut data, 0x10, 0x380);
         put_u32(&mut data, 0x14, 0);
         put_u32(&mut data, 0x18, 0);
-        put_u32(&mut data, 0x1c, 0);
+        put_u32(&mut data, 0x1c, 0x3c0);
         put_u32(&mut data, 0x20, 0x2c0);
         put_u32(&mut data, 0x24, 0x80);
         put_u32(&mut data, 0x28, 0x40);
         put_u32(&mut data, 0x2c, 0);
         put_u32(&mut data, 0x30, 0);
-        put_u32(&mut data, 0x34, 0);
+        put_u32(&mut data, 0x34, 4);
 
         put_u32(&mut data, 0x40, 0x40);
         put_u32(&mut data, 0x44, 1);
         put_u32(&mut data, 0x48, 0);
+        put_u32(&mut data, 0x4c, 0x48);
+        put_u32(&mut data, 0x50, 1);
+        put_u32(&mut data, 0x54, 0);
         put_u32(&mut data, 0x80, 0x60);
+        put_u32(&mut data, 0x88, 0x200);
 
         let model = 0xa0usize;
         put_u32(&mut data, model + 0x34, 0x120);
@@ -507,19 +722,28 @@ mod tests {
         put_u32(&mut data, model + 0x84, 0);
 
         let material = 0x160usize;
-        put_u32(&mut data, material + 0x10, 0);
+        put_u32(&mut data, material, 0x200);
+        put_u32(&mut data, material + 0x10, 0x20);
         put_u32(&mut data, material + 0x14, 2);
         put_u32(&mut data, material + 0x1c, 12);
         put_u32(&mut data, material + 0x20, 0x80);
         put_u32(&mut data, material + 0x24, 0x80);
         put_u32(&mut data, material + 0x28, 21);
 
+        let params_pointer = 0x260usize;
+        put_u32(&mut data, params_pointer, 0);
+        put_u32(&mut data, params_pointer + 4, 6);
+        let encoded_location = ((params_pointer - 0x40) / 4) as u32;
+        put_u32(&mut data, 0x3c0, (2u32 << 25) | encoded_location);
+
         data[0x300..0x30c].copy_from_slice(b"enemy_model\0");
         data[0x30c..0x315].copy_from_slice(b"body_tex\0");
         data[0x315..0x323].copy_from_slice(b"body_material\0");
 
-        put_u32(&mut data, 0x380, 1);
-        put_u32(&mut data, 0x384, GPUREG_TEXUNIT_CONFIG as u32);
+        put_gpu_write(&mut data, 0x380, 3 << 16, GPUREG_TEXENV_SOURCE[0]);
+        put_gpu_write(&mut data, 0x388, 2 << 12, GPUREG_TEXENV_OPERAND[0]);
+        put_gpu_write(&mut data, 0x390, 0, GPUREG_TEXENV_COMBINER[0]);
+        put_gpu_write(&mut data, 0x3a0, 1, GPUREG_TEXUNIT_CONFIG);
         data
     }
 
@@ -527,15 +751,32 @@ mod tests {
     fn direct_bch_material_names_and_enable_bits_are_structural() {
         let data = synthetic_bch_model();
         let inventory = BchModelInspector.inspect(&data).unwrap();
+        assert_eq!(inventory.model_count, 1);
         assert_eq!(inventory.model_name.as_deref(), Some("enemy_model"));
         assert_eq!(inventory.materials.len(), 1);
         let material = &inventory.materials[0];
         assert_eq!(material.name.as_deref(), Some("body_material"));
+        assert_eq!(material.model_index, 0);
+        assert_eq!(material.model_material_index, 0);
         assert_eq!(material.textures.len(), 1);
         assert_eq!(material.textures[0].slot, 0);
         assert_eq!(material.textures[0].internal_name, "body_tex");
         assert_eq!(material.textures[0].role, TextureRole::Unknown);
         assert!(material.textures[0].enabled);
+        assert_eq!(material.alpha_stages.len(), 1);
+        assert_eq!(material.alpha_stages[0].combiner_id, 0);
+        assert_eq!(material.alpha_stages[0].inputs[0].source_id, 3);
+        assert_eq!(material.alpha_stages[0].inputs[0].operand_id, 2);
+    }
+
+    #[test]
+    fn model_count_comes_from_resolved_h3d_model_pointer_table() {
+        let mut data = synthetic_bch_model();
+        put_u32(&mut data, 0x44, 2);
+        put_u32(&mut data, 0x84, 0x160);
+        let inventory = BchModelInspector.inspect(&data).unwrap();
+        assert_eq!(inventory.model_count, 2);
+        assert_eq!(inventory.materials.len(), 1);
     }
 
     #[test]
@@ -549,12 +790,13 @@ mod tests {
         assert!(inspector.probe(&wrapper));
         let inventory = inspector.inspect(&wrapper).unwrap();
         assert_eq!(inventory.materials[0].textures[0].internal_name, "body_tex");
+        assert_eq!(inventory.materials[0].alpha_stages.len(), 1);
     }
 
     #[test]
     fn disabled_texture_slot_is_preserved_as_disabled_metadata() {
         let mut data = synthetic_bch_model();
-        put_u32(&mut data, 0x380, 0);
+        put_u32(&mut data, 0x3a0, 0);
         let inventory = BchModelInspector.inspect(&data).unwrap();
         assert_eq!(inventory.materials[0].textures.len(), 1);
         assert!(!inventory.materials[0].textures[0].enabled);

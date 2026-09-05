@@ -1,0 +1,19 @@
+[package]
+name = "eo-untold"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "EOU1/EO2U native orchestration and parity inventory for EO-TexRip"
+
+[dependencies]
+eo-archives = { path = "../eo-archives" }
+eo-core = { path = "../eo-core" }
+eo-models = { path = "../eo-models" }
+eo-profiles = { path = "../eo-profiles" }
+eo-rom = { path = "../eo-rom" }
+eo-textures = { path = "../eo-textures" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
