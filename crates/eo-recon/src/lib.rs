@@ -1,19 +1,35 @@
 //! Privacy-safe format reconnaissance for planned Etrian Odyssey profiles.
 //!
 //! Reconnaissance deliberately reports aggregate metadata only. It never emits
-//! RomFS paths, proprietary bytes, payload offsets, or content hashes. The goal
-//! is to identify which already-known parser families are actually present
-//! before 0.70 broadens native extraction beyond the Untold titles.
+//! RomFS paths, proprietary bytes, payload offsets, member names, or content
+//! hashes. The goal is to identify which already-known parser families are
+//! actually present before 0.70 broadens native extraction beyond Untold.
 
+use eo_archives::{ArchiveParser, EplParser, ExtractionBudget};
 use eo_core::GameId;
 use eo_profiles::{detect_verified_profile, ProfileStatus};
 use eo_rom::{RomError, RomReader};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-pub const RECON_SCHEMA: &str = "eo-texrip-universal-eo-recon-v1";
+pub const RECON_SCHEMA: &str = "eo-texrip-universal-eo-recon-v2";
 pub const RECON_PROBE_BYTES: usize = 0x4_0000;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchiveReconSummary {
+    pub hpi_files: u64,
+    pub hpb_files: u64,
+    pub hpi_hpb_pairs: u64,
+    pub hpi_index_errors: u64,
+    pub hpi_members: u64,
+    pub hpi_members_marked_compressed: u64,
+    pub hpi_member_extensions: BTreeMap<String, u64>,
+    pub epl_files_inspected: u64,
+    pub epl_inspect_errors: u64,
+    pub epl_members: u64,
+    pub epl_member_extensions: BTreeMap<String, u64>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UniversalEoReconReport {
@@ -32,6 +48,7 @@ pub struct UniversalEoReconReport {
     pub extensions: BTreeMap<String, u64>,
     pub leading_magics: BTreeMap<String, u64>,
     pub embedded_magics: BTreeMap<String, u64>,
+    pub archives: ArchiveReconSummary,
     pub privacy: String,
 }
 
@@ -71,15 +88,92 @@ pub fn recon_reader<R: RomReader>(reader: &R) -> Result<UniversalEoReconReport, 
     let mut extensions = BTreeMap::new();
     let mut leading_magics = BTreeMap::new();
     let mut embedded_magics = BTreeMap::new();
+    let mut archives = ArchiveReconSummary::default();
     let mut romfs_bytes_total = 0u64;
     let mut largest_file_bytes = 0u64;
     let mut files_probed = 0u64;
     let mut probe_read_errors = 0u64;
 
+    let mut hpi_keys = BTreeSet::new();
+    let mut hpb_keys = BTreeSet::new();
+    for entry in &entries {
+        match extension_bucket(&entry.virtual_path).as_str() {
+            "hpi" => {
+                archives.hpi_files += 1;
+                hpi_keys.insert(archive_pair_key(&entry.virtual_path));
+            }
+            "hpb" => {
+                archives.hpb_files += 1;
+                hpb_keys.insert(archive_pair_key(&entry.virtual_path));
+            }
+            _ => {}
+        }
+    }
+    archives.hpi_hpb_pairs = hpi_keys.intersection(&hpb_keys).count() as u64;
+
+    let budget = ExtractionBudget::default();
     for entry in &entries {
         romfs_bytes_total = romfs_bytes_total.saturating_add(entry.size);
         largest_file_bytes = largest_file_bytes.max(entry.size);
-        increment(&mut extensions, extension_bucket(&entry.virtual_path));
+        let extension = extension_bucket(&entry.virtual_path);
+        increment(&mut extensions, extension.clone());
+
+        if extension == "hpi" && entry.size != 0 {
+            match reader.read_entry(&entry.virtual_path) {
+                Ok(data) => match inspect_hpi_index(&data) {
+                    Ok(index) => {
+                        archives.hpi_members = archives.hpi_members.saturating_add(index.members);
+                        archives.hpi_members_marked_compressed = archives
+                            .hpi_members_marked_compressed
+                            .saturating_add(index.members_marked_compressed);
+                        merge_counts(
+                            &mut archives.hpi_member_extensions,
+                            &index.member_extensions,
+                        );
+                    }
+                    Err(()) => {
+                        archives.hpi_index_errors = archives.hpi_index_errors.saturating_add(1)
+                    }
+                },
+                Err(_) => archives.hpi_index_errors = archives.hpi_index_errors.saturating_add(1),
+            }
+        }
+
+        if extension == "epl" && entry.size != 0 {
+            match reader.read_entry(&entry.virtual_path) {
+                Ok(data) => {
+                    let parser = EplParser;
+                    if !parser.probe(&data) {
+                        archives.epl_inspect_errors = archives.epl_inspect_errors.saturating_add(1);
+                    } else {
+                        match parser.inspect(&data, budget) {
+                            Ok(inventory) => {
+                                archives.epl_files_inspected =
+                                    archives.epl_files_inspected.saturating_add(1);
+                                archives.epl_members = archives
+                                    .epl_members
+                                    .saturating_add(inventory.members.len() as u64);
+                                for member in inventory.members {
+                                    let bucket = member
+                                        .name
+                                        .as_deref()
+                                        .map(extension_bucket)
+                                        .unwrap_or_else(|| "<unnamed>".to_owned());
+                                    increment(&mut archives.epl_member_extensions, bucket);
+                                }
+                            }
+                            Err(_) => {
+                                archives.epl_inspect_errors =
+                                    archives.epl_inspect_errors.saturating_add(1)
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    archives.epl_inspect_errors = archives.epl_inspect_errors.saturating_add(1)
+                }
+            }
+        }
 
         if entry.size == 0 {
             continue;
@@ -100,7 +194,7 @@ pub fn recon_reader<R: RomReader>(reader: &R) -> Result<UniversalEoReconReport, 
         }
         for (name, magic) in known_four_byte_magics() {
             if find_magic_after_start(&probe, magic) {
-                increment(&mut embedded_magics, name.to_owned());
+                increment(&mut embedded_magics, normalize_magic_name(name).to_owned());
             }
         }
     }
@@ -121,13 +215,106 @@ pub fn recon_reader<R: RomReader>(reader: &R) -> Result<UniversalEoReconReport, 
         extensions,
         leading_magics,
         embedded_magics,
-        privacy: "Aggregate counts only; no RomFS paths, payload bytes, payload offsets, or content hashes are emitted."
+        archives,
+        privacy: "Aggregate counts only; no RomFS paths, archive member names, proprietary bytes, payload offsets, or content hashes are emitted."
             .to_owned(),
     })
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct HpiIndexSummary {
+    members: u64,
+    members_marked_compressed: u64,
+    member_extensions: BTreeMap<String, u64>,
+}
+
+fn inspect_hpi_index(data: &[u8]) -> Result<HpiIndexSummary, ()> {
+    const HEADER: usize = 0x18;
+    const ENTRY: usize = 16;
+    if data.len() < HEADER || data.get(..4) != Some(b"HPIH") {
+        return Err(());
+    }
+    let unknown_count = usize::from(read_u16_le(data, 0x12)?);
+    let file_count = usize::from(read_u16_le(data, 0x14)?);
+    let unknown_bytes = unknown_count.checked_mul(4).ok_or(())?;
+    let file_table = HEADER.checked_add(unknown_bytes).ok_or(())?;
+    let table_size = file_count.checked_mul(ENTRY).ok_or(())?;
+    let names_base = file_table.checked_add(table_size).ok_or(())?;
+    if names_base > data.len() || file_table.checked_add(table_size).ok_or(())? > data.len() {
+        return Err(());
+    }
+    let names = &data[names_base..];
+    let mut summary = HpiIndexSummary::default();
+
+    for index in 0..file_count {
+        let entry_offset = file_table
+            .checked_add(index.checked_mul(ENTRY).ok_or(())?)
+            .ok_or(())?;
+        let name_offset = usize::try_from(read_u32_le(data, entry_offset)?).map_err(|_| ())?;
+        let marked_compressed = read_u32_le(data, entry_offset + 12)? != 0;
+        if marked_compressed {
+            summary.members_marked_compressed =
+                summary.members_marked_compressed.saturating_add(1);
+        }
+        let bucket = if let Some(tail) = names.get(name_offset..) {
+            let end = tail.iter().position(|byte| *byte == 0).unwrap_or(tail.len());
+            extension_bucket_bytes(&tail[..end])
+        } else {
+            "<invalid-name>".to_owned()
+        };
+        increment(&mut summary.member_extensions, bucket);
+        summary.members = summary.members.saturating_add(1);
+    }
+    Ok(summary)
+}
+
+fn read_u16_le(data: &[u8], offset: usize) -> Result<u16, ()> {
+    let bytes = data.get(offset..offset.checked_add(2).ok_or(())?).ok_or(())?;
+    Ok(u16::from_le_bytes(bytes.try_into().map_err(|_| ())?))
+}
+
+fn read_u32_le(data: &[u8], offset: usize) -> Result<u32, ()> {
+    let bytes = data.get(offset..offset.checked_add(4).ok_or(())?).ok_or(())?;
+    Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| ())?))
+}
+
+fn extension_bucket_bytes(path: &[u8]) -> String {
+    let leaf = path
+        .rsplit(|byte| matches!(*byte, b'/' | b'\\'))
+        .next()
+        .unwrap_or(path);
+    let Some(dot) = leaf.iter().rposition(|byte| *byte == b'.') else {
+        return "<none>".to_owned();
+    };
+    if dot == 0 || dot + 1 >= leaf.len() {
+        return "<none>".to_owned();
+    }
+    let extension = &leaf[dot + 1..];
+    if extension.iter().all(u8::is_ascii_alphanumeric) {
+        extension
+            .iter()
+            .map(u8::to_ascii_lowercase)
+            .map(char::from)
+            .collect()
+    } else {
+        "<non-ascii>".to_owned()
+    }
+}
+
 fn increment(map: &mut BTreeMap<String, u64>, key: String) {
     *map.entry(key).or_default() += 1;
+}
+
+fn merge_counts(target: &mut BTreeMap<String, u64>, source: &BTreeMap<String, u64>) {
+    for (key, count) in source {
+        *target.entry(key.clone()).or_default() += count;
+    }
+}
+
+fn archive_pair_key(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let without_extension = normalized.rsplit_once('.').map_or(normalized.as_str(), |(stem, _)| stem);
+    without_extension.to_ascii_lowercase()
 }
 
 fn extension_bucket(path: &str) -> String {
@@ -155,13 +342,18 @@ fn known_four_byte_magics() -> [(&'static str, &'static [u8]); 10] {
     ]
 }
 
+fn normalize_magic_name(name: &str) -> &str {
+    if name == "ctxb_lower" {
+        "ctxb"
+    } else {
+        name
+    }
+}
+
 fn leading_magic(data: &[u8]) -> Option<&'static str> {
     for (name, magic) in known_four_byte_magics() {
         if data.starts_with(magic) {
-            return Some(match name {
-                "ctxb_lower" => "ctxb",
-                other => other,
-            });
+            return Some(normalize_magic_name(name));
         }
     }
     if data.starts_with(b"EPL") {
@@ -245,6 +437,28 @@ mod tests {
         }
     }
 
+    fn synthetic_hpi(names: &[&[u8]]) -> Vec<u8> {
+        let table_size = names.len() * 16;
+        let names_base = 0x18 + table_size;
+        let names_len = names.iter().map(|name| name.len() + 1).sum::<usize>();
+        let mut data = vec![0u8; names_base + names_len];
+        data[0..4].copy_from_slice(b"HPIH");
+        data[0x14..0x16].copy_from_slice(&(names.len() as u16).to_le_bytes());
+        let mut name_cursor = 0usize;
+        for (index, name) in names.iter().enumerate() {
+            let offset = 0x18 + index * 16;
+            data[offset..offset + 4].copy_from_slice(&(name_cursor as u32).to_le_bytes());
+            data[offset + 8..offset + 12].copy_from_slice(&16u32.to_le_bytes());
+            if index == 1 {
+                data[offset + 12..offset + 16].copy_from_slice(&32u32.to_le_bytes());
+            }
+            let start = names_base + name_cursor;
+            data[start..start + name.len()].copy_from_slice(name);
+            name_cursor += name.len() + 1;
+        }
+        data
+    }
+
     #[test]
     fn universal_eo_recon_reports_only_aggregate_format_evidence() {
         let mut files = BTreeMap::new();
@@ -254,13 +468,18 @@ mod tests {
         files.insert("MODEL/WRAPPED.BIN".to_owned(), wrapped);
         files.insert("PACK/DATA.CTPK".to_owned(), b"CTPKfixture".to_vec());
         files.insert("README".to_owned(), Vec::new());
+        files.insert(
+            "ROOT/DATA.HPI".to_owned(),
+            synthetic_hpi(&[b"MODEL/FOO.BAM", b"TEX/BAR.STEX"]),
+        );
+        files.insert("ROOT/DATA.HPB".to_owned(), vec![0u8; 64]);
 
         let report = recon_reader(&FixtureReader::eo4(files)).unwrap();
         assert_eq!(report.schema, RECON_SCHEMA);
         assert_eq!(report.profile_id, "eo4");
         assert_eq!(report.game_id, GameId::EtrianOdysseyIv);
         assert_eq!(report.profile_status, ProfileStatus::PlannedResearch);
-        assert_eq!(report.romfs_files, 4);
+        assert_eq!(report.romfs_files, 6);
         assert_eq!(report.extensions.get("stex"), Some(&1));
         assert_eq!(report.extensions.get("bin"), Some(&1));
         assert_eq!(report.extensions.get("ctpk"), Some(&1));
@@ -268,7 +487,19 @@ mod tests {
         assert_eq!(report.leading_magics.get("stex"), Some(&1));
         assert_eq!(report.leading_magics.get("ctpk"), Some(&1));
         assert_eq!(report.embedded_magics.get("cgfx"), Some(&1));
+        assert_eq!(report.archives.hpi_hpb_pairs, 1);
+        assert_eq!(report.archives.hpi_members, 2);
+        assert_eq!(report.archives.hpi_members_marked_compressed, 1);
+        assert_eq!(report.archives.hpi_member_extensions.get("bam"), Some(&1));
+        assert_eq!(report.archives.hpi_member_extensions.get("stex"), Some(&1));
         assert_eq!(report.probe_read_errors, 0);
+    }
+
+    #[test]
+    fn hpi_index_rejects_truncated_tables_without_emitting_names() {
+        let mut hpi = synthetic_hpi(&[b"TEX/ONE.STEX"]);
+        hpi.truncate(0x1c);
+        assert_eq!(inspect_hpi_index(&hpi), Err(()));
     }
 
     #[test]
