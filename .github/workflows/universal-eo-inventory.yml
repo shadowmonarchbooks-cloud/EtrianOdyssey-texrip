@@ -1,0 +1,74 @@
+name: Universal EO native inventory build
+
+on:
+  push:
+    branches:
+      - 'milestone/0.70-universal-eo'
+    paths:
+      - 'Cargo.toml'
+      - 'crates/eo-core/**'
+      - 'crates/eo-profiles/**'
+      - 'crates/eo-rom/**'
+      - 'crates/eo-archives/**'
+      - 'crates/eo-textures/**'
+      - 'crates/eo-untold/**'
+      - 'crates/eo-universal/**'
+      - '.github/workflows/universal-eo-inventory.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'crates/eo-core/**'
+      - 'crates/eo-profiles/**'
+      - 'crates/eo-rom/**'
+      - 'crates/eo-archives/**'
+      - 'crates/eo-textures/**'
+      - 'crates/eo-untold/**'
+      - 'crates/eo-universal/**'
+      - '.github/workflows/universal-eo-inventory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-inventory:
+    name: Build Windows native inventory tool
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: rustup show
+
+      - name: Test universal inventory crate
+        run: cargo test -p eo-universal --all-targets
+
+      - name: Build inventory executable
+        run: cargo build --release -p eo-universal --bin eo-texrip-universal-inventory
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item 'target\release\eo-texrip-universal-inventory.exe' 'dist\EO-TexRip-Universal-Inventory.exe'
+          @'
+          EO-TexRip 0.70 Universal EO native inventory utility
+
+          Usage:
+            EO-TexRip-Universal-Inventory.exe <decrypted EO4/EO5/EON ROM> [output-report.json]
+
+          This is a parser-backed native inventory smoke, not an extraction release.
+          It expands only evidence-backed archive member families and runs the
+          native STEX/CGFX/BCH/EPL/FARC/standard-CTPK paths. The generated report
+          is safe to share: aggregate parser counts and issue stages only, with no
+          RomFS paths, archive member names, texture names, payload bytes, offsets,
+          or content hashes.
+          '@ | Set-Content -Encoding ascii 'dist\README.txt'
+
+      - name: Upload inventory artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EO-TexRip-0.70-universal-inventory-windows-x64
+          path: dist/*
+          if-no-files-found: error
