@@ -1147,6 +1147,10 @@ fn strict_texture_signature(path: &str, probe: &[u8]) -> bool {
         _ => {}
     }
 
+    if has_cgfx_probe(probe) {
+        return true;
+    }
+
     let ext = extension(path).map(str::to_ascii_lowercase);
     let extension_qualified = matches!(
         ext.as_deref(),

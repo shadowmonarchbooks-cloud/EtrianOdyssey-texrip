@@ -53,6 +53,12 @@ fn truncated_atbc_cgfx_probe() -> Vec<u8> {
     data
 }
 
+fn truncated_wrapped_cgfx_probe() -> Vec<u8> {
+    let mut data = truncated_atbc_cgfx_probe();
+    data[..4].fill(0);
+    data
+}
+
 #[test]
 fn truncated_atbc_cgfx_header_is_inventory_and_strict_candidate_evidence() {
     let rom = FakeRom {
@@ -65,6 +71,24 @@ fn truncated_atbc_cgfx_header_is_inventory_and_strict_candidate_evidence() {
     let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
     assert_eq!(inventory.summary.strict_candidate_files, 1);
     assert_eq!(inventory.summary.atbc_files, 1);
+    assert_eq!(inventory.summary.cgfx_files, 1);
+    assert_eq!(inventory.model_payloads, 0);
+    assert!(inventory.assets.is_empty());
+    assert!(inventory.issues.is_empty());
+}
+
+#[test]
+fn extension_selected_wrapped_cgfx_is_strict_candidate_evidence() {
+    let rom = FakeRom {
+        files: BTreeMap::from([(
+            "models/wrapped.bcmdl".to_owned(),
+            truncated_wrapped_cgfx_probe(),
+        )]),
+    };
+
+    let inventory = inventory_reader(&rom, ExtractionBudget::default()).unwrap();
+    assert_eq!(inventory.summary.strict_candidate_files, 1);
+    assert_eq!(inventory.summary.atbc_files, 0);
     assert_eq!(inventory.summary.cgfx_files, 1);
     assert_eq!(inventory.model_payloads, 0);
     assert!(inventory.assets.is_empty());
