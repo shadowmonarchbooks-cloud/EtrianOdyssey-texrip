@@ -14,7 +14,7 @@ The profile registry recognizes the known JP/US/EU retail identities for the thr
 | `eo5` | `BMZ` | `000400000018D000`, `00040000001C5100`, `00040000001C5300` |
 | `eon` | `BZM` | `00040000001CA300`, `00040000001D4E00`, `00040000001D5200` |
 
-Identity recognition does **not** imply parser support. These profiles remain `PlannedResearch` until real structural evidence establishes the extraction path.
+Identity recognition does **not** imply parser support. These profiles remain `PlannedResearch` until native extraction, independent coverage, and visible Azahar replacement are proven.
 
 ## Exit criteria
 
@@ -29,15 +29,14 @@ Identity recognition does **not** imply parser support. These profiles remain `P
 - [x] Collect one top-level recon report from a user-owned decrypted EO V ROM.
 - [x] Collect one top-level recon report from a user-owned decrypted Nexus ROM.
 - [x] Extend reconnaissance to aggregate HPI-index member extensions and structurally inspected EPL-member extensions without exporting proprietary names.
-- [ ] Collect v2 archive-aware recon reports for EO IV, EO V, and Nexus.
-- [ ] Freeze the observed per-game archive/container/model matrix from the archive-aware reports.
+- [x] Collect v2 archive-aware recon reports for EO IV, EO V, and Nexus.
+- [x] Freeze the observed per-game archive/container/model matrix from the archive-aware reports.
 
 ### Native extraction
 
 - [ ] Reuse existing STEX/CGFX/BCH/HPI/FARC/EPL adapters only where recon evidence supports them.
-- [ ] Add any additional archive/container/model parser required by EO IV from structural evidence and synthetic regression fixtures.
-- [ ] Add any additional archive/container/model parser required by EO V from structural evidence and synthetic regression fixtures.
-- [ ] Add any additional archive/container/model parser required by Nexus from structural evidence and synthetic regression fixtures.
+- [x] Add a bounded standard-CTPK parser with synthetic regression fixtures; do not infer CTPK solely from a `.ctpk` extension.
+- [ ] Account for the three EO IV `.ctpk`-named files whose payloads did not present standard `CTPK` magic in the bounded recon probe.
 - [ ] Route EO IV through the reusable native extraction/export layer.
 - [ ] Route EO V through the reusable native extraction/export layer.
 - [ ] Route Nexus through the reusable native extraction/export layer.
@@ -69,39 +68,35 @@ Identity recognition does **not** imply parser support. These profiles remain `P
 - [x] Repository tests use synthetic fixtures only.
 - [x] Do not commit Nintendo keys, ROM data, firmware, decoded game images, proprietary paths, or proprietary binary fixtures.
 
-## Initial USA reconnaissance evidence
+## Frozen USA archive-aware matrix
 
-The first top-level `v1` reports establish a real split between EO IV and the later two titles.
+The first two reconnaissance passes establish two real layout families rather than one assumed "Universal EO" container stack.
+
+| Game | Dominant storage | Texture/model evidence | Archive evidence | Open question |
+| --- | --- | --- | --- | --- |
+| EO IV | Direct RomFS files | 1,128 STEX, 350 ATBC/BAM, 156 leading CGFX, 352 bounded embedded-CGFX hits | 412 EPL files; all 412 structurally inspect, 2,553 aggregate EPL members | 3 `.ctpk`-named files do not present standard `CTPK` magic in the bounded probe and all three fail the standard parser |
+| EO V | One HPI/HPB pair | HPI index: 1,479 STEX, 478 BCH, 225 BAM2, 3 `.ctpk` members | 11,627 HPI members total, 7,538 marked compressed, 1,381 EPL members by extension | Confirm payload magic/structure for the three `.ctpk` members before treating them as CTPK |
+| Nexus | One HPI/HPB pair | HPI index: 1,990 STEX, 662 BCH, 448 BAM2, 3 `.ctpk` members | 17,883 HPI members total, 10,064 marked compressed, 1,968 EPL members by extension | Confirm payload magic/structure for the three `.ctpk` members before treating them as CTPK |
 
 ### EO IV
 
-- 4,900 RomFS files, about 739 MB total; no top-level HPI/HPB pair.
-- 1,128 `.stex` files and 1,128 leading `STEX` signatures.
-- 350 `.bam` files and 350 leading `ATBC` signatures.
-- 38 `.bcmdl`, 3 `.bcres`, and 156 leading `CGFX` payloads.
-- 352 files contain embedded `CGFX` within the bounded top-level probe.
-- 412 `.epl` files are present and require structural member inventory rather than magic-only inference.
-- 3 direct `.ctpk` files are present. CTPK therefore remains a concrete EO IV parser/coverage question rather than a hypothetical future format.
+EO IV exposes its major texture/model families directly in RomFS. The existing bounded STEX, CGFX/ATBC, and EPL adapters are therefore justified reuse targets. All 412 top-level EPL files structurally inspect with zero EPL parser errors and contain 2,553 aggregate members.
 
-This strongly supports reuse of the existing STEX, CGFX/ATBC, and EPL families for EO IV, but the v2 EPL inventory and the three observed CTPK containers must be accounted for before the EO IV matrix is frozen.
+The three `.ctpk`-named files are deliberately **not** recorded as proven CTPK containers. Neither v1 nor v2 observed `CTPK` magic in the bounded top-level magic scan, while v2's standard CTPK parser attempted all three files and rejected all three. Extension alone is not container proof. They remain an explicit payload-classification item for 0.70 coverage.
 
 ### EO V
 
-- Only 45 top-level RomFS files, about 562 MB total.
-- One `.hpi` and one `.hpb`; the largest top-level file is about 318 MB.
-- The top-level surface otherwise consists mostly of audio/movie/system files.
-- One leading `CGFX` exists, but no bounded embedded texture/container magic was observed at top level.
-
-The top-level result is not evidence that EO V lacks STEX/CGFX/BCH or other texture families: most game data is hidden behind the HPI/HPB pair. The v2 HPI-index extension aggregate is required before assigning EO V's extraction path.
+EO V's dominant data path is HPI/HPB. Its HPI index contains 11,627 members with zero index errors; 7,538 entries are marked compressed. The texture/model-relevant extension surface includes 1,479 STEX, 478 BCH, 225 BAM2, 1,381 EPL, and three `.ctpk` members. This strongly supports reuse of the existing HPI/HPB, STEX, BCH/BAM2, and EPL families.
 
 ### Nexus
 
-- 87 top-level RomFS files, about 850 MB total.
-- One `.hpi` and one `.hpb`; the largest top-level file is about 509 MB.
-- The top-level surface otherwise consists mostly of audio/movie/system files.
-- One leading `CGFX` exists; one bounded embedded `CGFX` and one embedded `STEX` hit were observed.
+Nexus uses the same later-game archive family at larger scale. Its HPI index contains 17,883 members with zero index errors; 10,064 entries are marked compressed. The texture/model-relevant extension surface includes 1,990 STEX, 662 BCH, 448 BAM2, 1,968 EPL, and three `.ctpk` members. This supports the same HPI/HPB + STEX + BCH/BAM2 + EPL production architecture as EO V, while preserving the `.ctpk` payload question separately.
 
-As with EO V, the HPI/HPB pair is the dominant evidence boundary. The v2 HPI-index extension aggregate is required before assigning Nexus's extraction path.
+## Standard CTPK rule
+
+The native CTPK adapter follows the documented CTR Texture PacKage structure: `CTPK` magic, bounded texture-info table, declared texture-data section, texture type, dimensions, format, and exact base-level payload bounds. It recognizes the standard PICA format IDs already implemented by the shared decoder.
+
+A `.ctpk` filename is reconnaissance evidence only. Production may invoke the CTPK parser only when structural payload evidence supports it; the scanner must not reinterpret extension-only files as standard CTPK.
 
 ## Reconnaissance report
 
@@ -116,13 +111,14 @@ The current branch emits schema `eo-texrip-universal-eo-recon-v2`. In addition t
 - aggregate HPI/HPB pair counts;
 - HPI index member counts and extension buckets, read from the small HPI index without copying the large HPB payload;
 - the number of HPI entries marked compressed;
-- structurally validated EPL file/member counts and aggregate EPL member extensions.
+- structurally validated EPL file/member counts and aggregate EPL member extensions;
+- structural standard-CTPK file/texture/type/format counts where actual CTPK parsing succeeds.
 
 Reports remain safe to share for development because they contain aggregate counts rather than game file/member names or payload data.
 
 Recon recognizes these known four-byte format hints at the start of a top-level file or embedded within the bounded probe: `STEX`, `CGFX`, `BCH\0`, `ATBC`, `CTPK`, `CTXB`/`ctxb`, `cmb `, `FARC`, and `SIR0`, plus structurally inventoried EPL packages.
 
-A magic hit or file extension is reconnaissance evidence, not parser proof. Production support still requires the corresponding bounded structural parser to validate the container.
+A magic hit or file extension is reconnaissance evidence, not parser proof. Production support requires the corresponding bounded structural parser to validate the container.
 
 ## 0.70 rule
 
