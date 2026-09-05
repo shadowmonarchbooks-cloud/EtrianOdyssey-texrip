@@ -1,6 +1,6 @@
 [package]
 name = "eo-texrip-desktop"
-version = "0.60.0-rc.1"
+version = "0.60.0-rc.3"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
