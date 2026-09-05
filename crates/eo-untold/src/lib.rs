@@ -40,12 +40,22 @@ const INVENTORY_PROBE_BYTES: usize = 0x2_0000;
 const WRAPPED_BCH_PROBE_BYTES: usize = 0x1_0000;
 const MAX_EMBEDDED_CGFX: usize = 16;
 const MAX_EMBEDDED_BCH: usize = 8;
+const MATERIAL_REFERENCE_DISPLAY_LIMIT: usize = 20;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanIssue {
     pub source: String,
     pub stage: String,
     pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingMaterialReferenceIssue {
+    source: String,
+    missing_stage: String,
+    container_offset: u64,
+    reference_label: String,
+    names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,6 +159,7 @@ struct ScanState {
     usage: ExtractionUsage,
     summary: ParitySummary,
     issues: Vec<ScanIssue>,
+    pending_material_reference_issues: Vec<PendingMaterialReferenceIssue>,
     assets: Vec<ParityAsset>,
     materials: Vec<ParityMaterial>,
     bindings_by_name: BTreeMap<String, BTreeSet<String>>,
@@ -167,6 +178,7 @@ impl ScanState {
             usage: ExtractionUsage::default(),
             summary: ParitySummary::default(),
             issues: Vec::new(),
+            pending_material_reference_issues: Vec::new(),
             assets: Vec::new(),
             materials: Vec::new(),
             bindings_by_name: BTreeMap::new(),
@@ -262,6 +274,10 @@ pub fn inventory_reader<R: RomReader>(
     scan_staged_file_sets(files, &mut state);
     let mut assets = dedupe_assets(state.assets);
     bind_external_texture_names(&mut assets, &state.bindings_by_name);
+    state.issues.extend(finalize_material_reference_issues(
+        &assets,
+        std::mem::take(&mut state.pending_material_reference_issues),
+    ));
     let material_summary = summarize_materials(&state.materials, &assets);
     let material_texture_bindings = material_summary.material_texture_bindings;
     state.summary.issues = state.issues.len() as u64;
@@ -953,20 +969,96 @@ fn report_missing_material_textures(
     let missing = bindings
         .keys()
         .filter(|name| !decoded_names.contains(*name))
-        .map(String::as_str)
+        .cloned()
         .collect::<Vec<_>>();
     if missing.is_empty() {
         return;
     }
-    state.issue(
-        path,
-        stage,
-        format!(
-            "offset 0x{container_offset:X}: {} {reference_label} texture reference(s) were not decoded: {}",
-            missing.len(),
-            missing.iter().take(20).copied().collect::<Vec<_>>().join(", ")
-        ),
-    );
+    state
+        .pending_material_reference_issues
+        .push(PendingMaterialReferenceIssue {
+            source: path.to_owned(),
+            missing_stage: stage.to_owned(),
+            container_offset,
+            reference_label: reference_label.to_owned(),
+            names: missing,
+        });
+}
+
+fn finalize_material_reference_issues(
+    assets: &[ParityAsset],
+    pending: Vec<PendingMaterialReferenceIssue>,
+) -> Vec<ScanIssue> {
+    let mut decoded_by_name = BTreeMap::<&str, usize>::new();
+    for asset in assets {
+        let name = asset.internal_name.as_str();
+        if !name.is_empty() {
+            *decoded_by_name.entry(name).or_default() += 1;
+        }
+    }
+
+    let mut issues = Vec::new();
+    for pending_issue in pending {
+        let mut missing = Vec::new();
+        let mut ambiguous = Vec::new();
+        for name in pending_issue.names {
+            match decoded_by_name.get(name.as_str()).copied().unwrap_or(0) {
+                0 => missing.push(name),
+                1 => {}
+                _ => ambiguous.push(name),
+            }
+        }
+
+        if !missing.is_empty() {
+            issues.push(ScanIssue {
+                source: pending_issue.source.clone(),
+                stage: pending_issue.missing_stage.clone(),
+                message: render_material_reference_issue(
+                    pending_issue.container_offset,
+                    &pending_issue.reference_label,
+                    &missing,
+                    "were not decoded anywhere in the scanned ROM",
+                ),
+            });
+        }
+        if !ambiguous.is_empty() {
+            issues.push(ScanIssue {
+                source: pending_issue.source,
+                stage: pending_issue.missing_stage.replace("_missing", "_ambiguous"),
+                message: render_material_reference_issue(
+                    pending_issue.container_offset,
+                    &pending_issue.reference_label,
+                    &ambiguous,
+                    "matched multiple decoded textures across the scanned ROM and could not be bound unambiguously",
+                ),
+            });
+        }
+    }
+    issues
+}
+
+fn render_material_reference_issue(
+    container_offset: u64,
+    reference_label: &str,
+    names: &[String],
+    detail: &str,
+) -> String {
+    let displayed = names
+        .iter()
+        .take(MATERIAL_REFERENCE_DISPLAY_LIMIT)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let omitted = names.len().saturating_sub(MATERIAL_REFERENCE_DISPLAY_LIMIT);
+    let suffix = if omitted == 0 {
+        String::new()
+    } else {
+        format!(", ... (+{omitted} more)")
+    };
+    format!(
+        "offset 0x{container_offset:X}: {} {reference_label} texture reference(s) {detail}: {displayed}{suffix}",
+        names.len()
+    )
 }
 
 fn push_asset(
@@ -1307,6 +1399,14 @@ mod tests {
         data
     }
 
+    fn named_asset(name: &str, hash_index: u64) -> ParityAsset {
+        let hash = format!("{hash_index:016X}");
+        let mut asset =
+            ParityAsset::test_fixture(&hash, 8, 8, 13, "test", "dungeon", 0);
+        asset.internal_name = name.to_owned();
+        asset
+    }
+
     fn hpi_for_uncompressed(name: &str, payload_size: usize) -> Vec<u8> {
         let name = name.as_bytes();
         let mut hpi = vec![0u8; 0x28 + name.len() + 1];
@@ -1643,7 +1743,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_material_texture_references_emit_one_frozen_decoder_issue_per_payload() {
+    fn unresolved_material_texture_references_are_preserved_structurally_per_payload() {
         let bindings = BTreeMap::from([
             (
                 "decoded".to_owned(),
@@ -1671,14 +1771,18 @@ mod tests {
             &mut state,
         );
 
-        assert_eq!(state.issues.len(), 1);
-        assert_eq!(state.issues[0].stage, "cgfx_material_texture_missing");
-        assert!(state.issues[0].message.contains("2 MTOB texture reference(s)"));
-        assert!(state.issues[0].message.contains("missing-a, missing-b"));
+        assert!(state.issues.is_empty());
+        assert_eq!(state.pending_material_reference_issues.len(), 1);
+        let pending = &state.pending_material_reference_issues[0];
+        assert_eq!(pending.source, "model.bam");
+        assert_eq!(pending.missing_stage, "cgfx_material_texture_missing");
+        assert_eq!(pending.container_offset, 0x123);
+        assert_eq!(pending.reference_label, "MTOB");
+        assert_eq!(pending.names, vec!["missing-a", "missing-b"]);
     }
 
     #[test]
-    fn fully_decoded_material_texture_references_do_not_emit_missing_issue() {
+    fn fully_decoded_material_texture_references_do_not_emit_pending_issue() {
         let bindings = BTreeMap::from([(
             "decoded".to_owned(),
             BTreeSet::from(["binding-decoded".to_owned()]),
@@ -1697,6 +1801,66 @@ mod tests {
         );
 
         assert!(state.issues.is_empty());
+        assert!(state.pending_material_reference_issues.is_empty());
+    }
+
+    #[test]
+    fn material_reference_reconciliation_uses_full_name_set_before_rendering() {
+        let names = (0..25)
+            .map(|index| format!("tex{index:02}"))
+            .collect::<Vec<_>>();
+        let pending = vec![PendingMaterialReferenceIssue {
+            source: "model.bam2".to_owned(),
+            missing_stage: "bch_material_texture_missing".to_owned(),
+            container_offset: 0x80,
+            reference_label: "H3D material".to_owned(),
+            names: names.clone(),
+        }];
+        let mut assets = names[..21]
+            .iter()
+            .enumerate()
+            .map(|(index, name)| named_asset(name, index as u64 + 1))
+            .collect::<Vec<_>>();
+        assets.push(named_asset("tex21", 100));
+        assets.push(named_asset("tex21", 101));
+
+        let issues = finalize_material_reference_issues(&assets, pending);
+        assert_eq!(issues.len(), 2);
+        let missing = issues
+            .iter()
+            .find(|issue| issue.stage == "bch_material_texture_missing")
+            .unwrap();
+        assert!(missing.message.contains("3 H3D material texture reference(s)"));
+        assert!(missing.message.contains("tex22, tex23, tex24"));
+        assert!(!missing.message.contains("tex00"));
+        let ambiguous = issues
+            .iter()
+            .find(|issue| issue.stage == "bch_material_texture_ambiguous")
+            .unwrap();
+        assert!(ambiguous.message.contains("1 H3D material texture reference(s)"));
+        assert!(ambiguous.message.contains("tex21"));
+    }
+
+    #[test]
+    fn material_reference_rendering_truncates_only_after_full_reconciliation() {
+        let names = (0..25)
+            .map(|index| format!("missing{index:02}"))
+            .collect::<Vec<_>>();
+        let pending = vec![PendingMaterialReferenceIssue {
+            source: "model.bam2".to_owned(),
+            missing_stage: "bch_material_texture_missing".to_owned(),
+            container_offset: 0,
+            reference_label: "H3D material".to_owned(),
+            names,
+        }];
+
+        let issues = finalize_material_reference_issues(&[], pending);
+        assert_eq!(issues.len(), 1);
+        let message = &issues[0].message;
+        assert!(message.contains("25 H3D material texture reference(s)"));
+        assert!(message.contains("missing19"));
+        assert!(!message.contains("missing20"));
+        assert!(message.contains("... (+5 more)"));
     }
 
     #[test]
