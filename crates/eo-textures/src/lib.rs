@@ -7,6 +7,7 @@
 
 pub mod bch;
 pub mod cgfx;
+pub mod ctpk;
 mod etc1;
 pub mod stex;
 pub mod swizzle;
