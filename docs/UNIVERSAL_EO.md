@@ -24,11 +24,13 @@ Identity recognition does **not** imply parser support. These profiles remain `P
 - [x] Keep EO IV/V/Nexus separate from the Untold extraction gate even after identity detection succeeds.
 - [x] Add a privacy-safe `eo-recon` library and CLI for the three 0.70 profiles.
 - [x] Recon reports aggregate RomFS counts, file-size totals, extension counts, and known leading/embedded magic-family counts.
-- [x] Recon reports omit RomFS paths, proprietary bytes, payload offsets, and content hashes.
-- [ ] Collect one recon report from a user-owned decrypted EO IV ROM.
-- [ ] Collect one recon report from a user-owned decrypted EO V ROM.
-- [ ] Collect one recon report from a user-owned decrypted Nexus ROM.
-- [ ] Freeze the observed per-game archive/container/model matrix from those reports.
+- [x] Recon reports omit RomFS paths, proprietary bytes, payload offsets, member names, and content hashes.
+- [x] Collect one top-level recon report from a user-owned decrypted EO IV ROM.
+- [x] Collect one top-level recon report from a user-owned decrypted EO V ROM.
+- [x] Collect one top-level recon report from a user-owned decrypted Nexus ROM.
+- [x] Extend reconnaissance to aggregate HPI-index member extensions and structurally inspected EPL-member extensions without exporting proprietary names.
+- [ ] Collect v2 archive-aware recon reports for EO IV, EO V, and Nexus.
+- [ ] Freeze the observed per-game archive/container/model matrix from the archive-aware reports.
 
 ### Native extraction
 
@@ -67,6 +69,40 @@ Identity recognition does **not** imply parser support. These profiles remain `P
 - [x] Repository tests use synthetic fixtures only.
 - [x] Do not commit Nintendo keys, ROM data, firmware, decoded game images, proprietary paths, or proprietary binary fixtures.
 
+## Initial USA reconnaissance evidence
+
+The first top-level `v1` reports establish a real split between EO IV and the later two titles.
+
+### EO IV
+
+- 4,900 RomFS files, about 739 MB total; no top-level HPI/HPB pair.
+- 1,128 `.stex` files and 1,128 leading `STEX` signatures.
+- 350 `.bam` files and 350 leading `ATBC` signatures.
+- 38 `.bcmdl`, 3 `.bcres`, and 156 leading `CGFX` payloads.
+- 352 files contain embedded `CGFX` within the bounded top-level probe.
+- 412 `.epl` files are present and require structural member inventory rather than magic-only inference.
+- 3 direct `.ctpk` files are present. CTPK therefore remains a concrete EO IV parser/coverage question rather than a hypothetical future format.
+
+This strongly supports reuse of the existing STEX, CGFX/ATBC, and EPL families for EO IV, but the v2 EPL inventory and the three observed CTPK containers must be accounted for before the EO IV matrix is frozen.
+
+### EO V
+
+- Only 45 top-level RomFS files, about 562 MB total.
+- One `.hpi` and one `.hpb`; the largest top-level file is about 318 MB.
+- The top-level surface otherwise consists mostly of audio/movie/system files.
+- One leading `CGFX` exists, but no bounded embedded texture/container magic was observed at top level.
+
+The top-level result is not evidence that EO V lacks STEX/CGFX/BCH or other texture families: most game data is hidden behind the HPI/HPB pair. The v2 HPI-index extension aggregate is required before assigning EO V's extraction path.
+
+### Nexus
+
+- 87 top-level RomFS files, about 850 MB total.
+- One `.hpi` and one `.hpb`; the largest top-level file is about 509 MB.
+- The top-level surface otherwise consists mostly of audio/movie/system files.
+- One leading `CGFX` exists; one bounded embedded `CGFX` and one embedded `STEX` hit were observed.
+
+As with EO V, the HPI/HPB pair is the dominant evidence boundary. The v2 HPI-index extension aggregate is required before assigning Nexus's extraction path.
+
 ## Reconnaissance report
 
 The development CLI is:
@@ -75,11 +111,18 @@ The development CLI is:
 eo-texrip-recon <decrypted EO4/EO5/EON ROM> [output-report.json]
 ```
 
-It emits schema `eo-texrip-universal-eo-recon-v1`. Reports are intended to be safe to share for development because they contain aggregate counts rather than game file names or payload data.
+The current branch emits schema `eo-texrip-universal-eo-recon-v2`. In addition to the v1 top-level aggregate fields, v2 reports:
 
-Recon currently recognizes these known four-byte format hints at the start of a file or embedded within the bounded probe: `STEX`, `CGFX`, `BCH\0`, `ATBC`, `CTPK`, `CTXB`/`ctxb`, `cmb `, `FARC`, and `SIR0`, plus top-level `EPL`.
+- aggregate HPI/HPB pair counts;
+- HPI index member counts and extension buckets, read from the small HPI index without copying the large HPB payload;
+- the number of HPI entries marked compressed;
+- structurally validated EPL file/member counts and aggregate EPL member extensions.
 
-A magic hit is reconnaissance evidence, not parser proof. Production support still requires the corresponding bounded structural parser to validate the container.
+Reports remain safe to share for development because they contain aggregate counts rather than game file/member names or payload data.
+
+Recon recognizes these known four-byte format hints at the start of a top-level file or embedded within the bounded probe: `STEX`, `CGFX`, `BCH\0`, `ATBC`, `CTPK`, `CTXB`/`ctxb`, `cmb `, `FARC`, and `SIR0`, plus structurally inventoried EPL packages.
+
+A magic hit or file extension is reconnaissance evidence, not parser proof. Production support still requires the corresponding bounded structural parser to validate the container.
 
 ## 0.70 rule
 
