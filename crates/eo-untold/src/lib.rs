@@ -896,15 +896,17 @@ fn inspect_model(
                 texture.internal_name
             );
             parity_material.insert_slot(texture.slot, key.clone(), texture.enabled);
-            local
-                .entry(texture.internal_name.clone())
-                .or_default()
-                .insert(key.clone());
-            state
-                .bindings_by_name
-                .entry(texture.internal_name)
-                .or_default()
-                .insert(key);
+            if texture.enabled {
+                local
+                    .entry(texture.internal_name.clone())
+                    .or_default()
+                    .insert(key.clone());
+                state
+                    .bindings_by_name
+                    .entry(texture.internal_name)
+                    .or_default()
+                    .insert(key);
+            }
         }
         state.materials.push(parity_material);
     }
@@ -991,8 +993,7 @@ fn finalize_material_reference_issues(
 ) -> Vec<ScanIssue> {
     let mut decoded_by_name = BTreeMap::<&str, usize>::new();
     for asset in assets {
-        let name = asset.internal_name.as_str();
-        if !name.is_empty() {
+        for name in asset.internal_names() {
             *decoded_by_name.entry(name).or_default() += 1;
         }
     }
@@ -1339,6 +1340,8 @@ fn is_windows_device_name(part: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eo_core::TextureRole;
+    use eo_models::{MaterialRecord, TextureReference};
     use eo_rom::{RomEntry, RomIdentityHint, RomImageKind, RomMetadata};
 
     #[derive(Clone)]
@@ -1403,7 +1406,7 @@ mod tests {
         let hash = format!("{hash_index:016X}");
         let mut asset =
             ParityAsset::test_fixture(&hash, 8, 8, 13, "test", "dungeon", 0);
-        asset.internal_name = name.to_owned();
+        asset.set_internal_name(name);
         asset
     }
 
@@ -1743,6 +1746,46 @@ mod tests {
     }
 
     #[test]
+    fn disabled_model_texture_reference_is_not_required() {
+        let inventory = ModelInventory {
+            model_count: 1,
+            model_name: Some("model".to_owned()),
+            materials: vec![MaterialRecord {
+                index: 0,
+                model_index: 0,
+                model_material_index: 0,
+                name: Some("material".to_owned()),
+                textures: vec![
+                    TextureReference {
+                        slot: 0,
+                        internal_name: "live".to_owned(),
+                        role: TextureRole::Unknown,
+                        enabled: true,
+                    },
+                    TextureReference {
+                        slot: 1,
+                        internal_name: "stale-disabled".to_owned(),
+                        role: TextureRole::Unknown,
+                        enabled: false,
+                    },
+                ],
+                alpha_stages: Vec::new(),
+            }],
+        };
+        let mut state = ScanState::new(ExtractionBudget::default());
+
+        let local = inspect_model("model.bch", "bch", 0, Ok(inventory), &mut state);
+
+        assert!(local.contains_key("live"));
+        assert!(!local.contains_key("stale-disabled"));
+        assert!(state.bindings_by_name.contains_key("live"));
+        assert!(!state.bindings_by_name.contains_key("stale-disabled"));
+        assert_eq!(state.materials.len(), 1);
+        assert_eq!(state.materials[0].slots.len(), 2);
+        assert!(!state.materials[0].slots[&1].enabled);
+    }
+
+    #[test]
     fn unresolved_material_texture_references_are_preserved_structurally_per_payload() {
         let bindings = BTreeMap::from([
             (
@@ -1802,6 +1845,26 @@ mod tests {
 
         assert!(state.issues.is_empty());
         assert!(state.pending_material_reference_issues.is_empty());
+    }
+
+    #[test]
+    fn deduped_alias_resolves_material_reference_warning() {
+        let mut first = ParityAsset::test_fixture("A", 8, 8, 13, "test", "dungeon", 0);
+        first.set_internal_name("day-sky");
+        let mut second = ParityAsset::test_fixture("A", 8, 8, 13, "test", "dungeon", 0);
+        second.set_internal_name("night-sky");
+        let assets = dedupe_assets(vec![first, second]);
+        assert_eq!(assets.len(), 1);
+
+        let pending = vec![PendingMaterialReferenceIssue {
+            source: "model.bch".to_owned(),
+            missing_stage: "bch_material_texture_missing".to_owned(),
+            container_offset: 0,
+            reference_label: "H3D material".to_owned(),
+            names: vec!["night-sky".to_owned()],
+        }];
+
+        assert!(finalize_material_reference_issues(&assets, pending).is_empty());
     }
 
     #[test]
