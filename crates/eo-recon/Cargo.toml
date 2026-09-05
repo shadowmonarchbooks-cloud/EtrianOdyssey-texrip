@@ -1,0 +1,21 @@
+[package]
+name = "eo-recon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Privacy-safe format reconnaissance for planned EO-TexRip game profiles"
+
+[dependencies]
+eo-archives = { path = "../eo-archives" }
+eo-core = { path = "../eo-core" }
+eo-profiles = { path = "../eo-profiles" }
+eo-rom = { path = "../eo-rom" }
+eo-textures = { path = "../eo-textures" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "eo-texrip-recon"
+path = "src/bin/eo-texrip-recon.rs"

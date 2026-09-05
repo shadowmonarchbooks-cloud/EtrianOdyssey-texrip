@@ -1,0 +1,22 @@
+[package]
+name = "eo-universal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Evidence-backed native inventory for Etrian Odyssey IV, V, and Nexus"
+
+[dependencies]
+eo-archives = { path = "../eo-archives" }
+eo-core = { path = "../eo-core" }
+eo-profiles = { path = "../eo-profiles" }
+eo-rom = { path = "../eo-rom" }
+eo-textures = { path = "../eo-textures" }
+eo-untold = { path = "../eo-untold" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "eo-texrip-universal-inventory"
+path = "src/bin/eo-texrip-universal-inventory.rs"

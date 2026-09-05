@@ -1,0 +1,64 @@
+name: Universal EO reconnaissance build
+
+on:
+  push:
+    branches:
+      - 'milestone/0.70-universal-eo'
+    paths:
+      - 'Cargo.toml'
+      - 'crates/eo-core/**'
+      - 'crates/eo-profiles/**'
+      - 'crates/eo-rom/**'
+      - 'crates/eo-recon/**'
+      - '.github/workflows/universal-eo-recon.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'crates/eo-core/**'
+      - 'crates/eo-profiles/**'
+      - 'crates/eo-rom/**'
+      - 'crates/eo-recon/**'
+      - '.github/workflows/universal-eo-recon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-recon:
+    name: Build Windows recon tool
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: rustup show
+
+      - name: Test recon crate
+        run: cargo test -p eo-recon --all-targets
+
+      - name: Build recon executable
+        run: cargo build --release -p eo-recon --bin eo-texrip-recon
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item 'target\release\eo-texrip-recon.exe' 'dist\EO-TexRip-Recon.exe'
+          @'
+          EO-TexRip 0.70 Universal EO reconnaissance utility
+
+          Usage:
+            EO-TexRip-Recon.exe <decrypted EO4/EO5/EON ROM> [output-report.json]
+
+          The generated JSON contains aggregate format counts only. It does not
+          include RomFS paths, payload bytes, payload offsets, or content hashes.
+          '@ | Set-Content -Encoding ascii 'dist\README.txt'
+
+      - name: Upload recon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EO-TexRip-0.70-recon-windows-x64
+          path: dist/*
+          if-no-files-found: error

@@ -10,6 +10,8 @@ members = [
     "crates/eo-textures",
     "crates/eo-models",
     "crates/eo-untold",
+    "crates/eo-recon",
+    "crates/eo-universal",
     "crates/eo-extract",
     "crates/eo-azahar",
     "app/desktop",
@@ -24,13 +26,15 @@ default-members = [
     "crates/eo-textures",
     "crates/eo-models",
     "crates/eo-untold",
+    "crates/eo-recon",
+    "crates/eo-universal",
     "crates/eo-extract",
     "crates/eo-azahar",
     "app/desktop",
 ]
 
 [workspace.package]
-version = "0.60.0"
+version = "0.70.0"
 edition = "2021"
 rust-version = "1.82"
 authors = ["EO-TexRip contributors"]
