@@ -200,7 +200,10 @@ mod windows_app {
 
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("EO-TexRip");
-                ui.label("0.60.0-rc.1 · Native EOU1 / EO2U texture extractor");
+                ui.label(format!(
+                    "{} · Native EOU1 / EO2U texture extractor",
+                    env!("CARGO_PKG_VERSION")
+                ));
                 ui.add_space(6.0);
                 ui.label("Select a decrypted/cleartext Nintendo 3DS ROM. EO-TexRip reads the ROM locally and writes decoded PNG textures to the folder you choose.");
                 ui.add_space(14.0);
@@ -316,5 +319,8 @@ fn main() -> eframe::Result<()> {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("EO-TexRip 0.60.0-rc.1 desktop packaging is currently Windows-only.");
+    eprintln!(
+        "EO-TexRip {} desktop packaging is currently Windows-only.",
+        env!("CARGO_PKG_VERSION")
+    );
 }
