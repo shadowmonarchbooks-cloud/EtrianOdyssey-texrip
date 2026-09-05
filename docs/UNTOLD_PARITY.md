@@ -61,8 +61,10 @@ The structural conclusion is intentionally bounded: for both audited Untold titl
 - [x] Generate Azahar `pack.json` automatically from native runtime hashes.
 - [x] Establish physical texture extraction completeness for EOU1 with the RC5 independent coverage audit.
 - [x] Establish physical texture extraction completeness for EO2U with the RC4 independent coverage audit.
-- [ ] Verify one visibly modified EOU1 exported PNG is actually rendered by Azahar through the generated pack.
-- [ ] Verify one visibly modified EO2U exported PNG is actually rendered by Azahar through the generated pack.
+- [x] Verify one visibly modified EOU1 exported PNG is actually rendered by Azahar through the generated pack.
+- [x] Verify one visibly modified EO2U exported PNG is actually rendered by Azahar through the generated pack.
+
+Both Azahar replacement checks were confirmed against user-owned game inputs after the structural coverage audits passed.
 
 ### Quality and legal boundary
 
