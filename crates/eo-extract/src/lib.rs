@@ -88,17 +88,9 @@ pub fn extract_rom_to_directory(
     let bytes = fs::read(source)?;
     let rom = NativeRom::detect(&bytes)?;
     let inventory = inventory_reader(&rom, ExtractionBudget::default())?;
-    let mut issues = inventory.issues.clone();
-    reconcile_material_reference_issues(
-        inventory
-            .assets
-            .iter()
-            .map(|asset| asset.internal_name.as_str()),
-        &mut issues,
-    );
     export_inventory(
         &inventory.assets,
-        &issues,
+        &inventory.issues,
         output,
         ExtractionIdentity {
             profile_id: inventory.profile_id,
@@ -107,99 +99,6 @@ pub fn extract_rom_to_directory(
             product_code: inventory.product_code,
         },
     )
-}
-
-fn reconcile_material_reference_issues<'a>(
-    decoded_internal_names: impl IntoIterator<Item = &'a str>,
-    issues: &mut Vec<ScanIssue>,
-) {
-    let mut decoded_by_name = BTreeMap::<&str, usize>::new();
-    for name in decoded_internal_names {
-        if !name.is_empty() {
-            *decoded_by_name.entry(name).or_default() += 1;
-        }
-    }
-
-    let mut reconciled = Vec::with_capacity(issues.len());
-    for issue in issues.drain(..) {
-        if !matches!(
-            issue.stage.as_str(),
-            "cgfx_material_texture_missing" | "bch_material_texture_missing"
-        ) {
-            reconciled.push(issue);
-            continue;
-        }
-
-        let Some((offset, reference_label, names)) = parse_material_reference_issue(&issue.message)
-        else {
-            // Keep an unfamiliar diagnostic intact rather than guessing at its
-            // structure. This also preserves messages whose name list was
-            // intentionally truncated by the lower-level scanner.
-            reconciled.push(issue);
-            continue;
-        };
-
-        let mut missing = Vec::new();
-        let mut ambiguous = Vec::new();
-        for name in names {
-            match decoded_by_name.get(name.as_str()).copied().unwrap_or(0) {
-                0 => missing.push(name),
-                1 => {
-                    // A unique ROM-wide decoded asset can satisfy this external
-                    // material reference even though it was not local to the
-                    // model payload that first emitted the diagnostic.
-                }
-                _ => ambiguous.push(name),
-            }
-        }
-
-        if !missing.is_empty() {
-            reconciled.push(ScanIssue {
-                source: issue.source.clone(),
-                stage: issue.stage.clone(),
-                message: format!(
-                    "{offset}: {} {reference_label} texture reference(s) were not decoded anywhere in the scanned ROM: {}",
-                    missing.len(),
-                    missing.join(", ")
-                ),
-            });
-        }
-
-        if !ambiguous.is_empty() {
-            reconciled.push(ScanIssue {
-                source: issue.source,
-                stage: issue.stage.replace("_missing", "_ambiguous"),
-                message: format!(
-                    "{offset}: {} {reference_label} texture reference(s) matched multiple decoded textures across the scanned ROM and could not be bound unambiguously: {}",
-                    ambiguous.len(),
-                    ambiguous.join(", ")
-                ),
-            });
-        }
-    }
-    *issues = reconciled;
-}
-
-fn parse_material_reference_issue(message: &str) -> Option<(String, String, Vec<String>)> {
-    let (head, names_text) = message.rsplit_once(": ")?;
-    let (offset, counted_description) = head.split_once(": ")?;
-    let counted_label = counted_description.strip_suffix(" texture reference(s) were not decoded")?;
-    let (count_text, reference_label) = counted_label.split_once(' ')?;
-    let declared_count = count_text.parse::<usize>().ok()?;
-    let names = names_text
-        .split(", ")
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-    // The lower-level diagnostic deliberately displays at most 20 names. If its
-    // declared count is larger than the displayed list, leave it unchanged so
-    // reconciliation never hides an unlisted truly-missing reference.
-    if names.len() != declared_count {
-        return None;
-    }
-    Some((offset.to_owned(), reference_label.to_owned(), names))
 }
 
 #[derive(Debug)]
@@ -503,16 +402,6 @@ mod tests {
         }
     }
 
-    fn missing_material_issue(name: &str) -> ScanIssue {
-        ScanIssue {
-            source: "DUNGEON/D15_AREA.BCMDL".to_owned(),
-            stage: "cgfx_material_texture_missing".to_owned(),
-            message: format!(
-                "offset 0x0: 1 MTOB texture reference(s) were not decoded: {name}"
-            ),
-        }
-    }
-
     #[test]
     fn default_output_sits_beside_rom() {
         assert_eq!(
@@ -526,50 +415,6 @@ mod tests {
         assert_eq!(safe_filename_component("CON"), "_CON");
         assert_eq!(safe_filename_component("LPT9.png"), "_LPT9.png");
         assert_eq!(safe_filename_component("boss:face?01"), "boss_face_01");
-    }
-
-    #[test]
-    fn unique_rom_wide_material_reference_clears_early_missing_warning() {
-        let mut issues = vec![missing_material_issue("parts04_jijiku")];
-        reconcile_material_reference_issues(["parts04_jijiku"], &mut issues);
-        assert!(issues.is_empty());
-    }
-
-    #[test]
-    fn duplicate_rom_wide_material_reference_becomes_ambiguous_warning() {
-        let mut issues = vec![missing_material_issue("parts04_jijiku")];
-        reconcile_material_reference_issues(
-            ["parts04_jijiku", "parts04_jijiku"],
-            &mut issues,
-        );
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].stage, "cgfx_material_texture_ambiguous");
-        assert!(issues[0].message.contains("matched multiple decoded textures"));
-        assert!(issues[0].message.contains("parts04_jijiku"));
-    }
-
-    #[test]
-    fn globally_absent_material_reference_remains_missing_warning() {
-        let mut issues = vec![missing_material_issue("missing_tex")];
-        reconcile_material_reference_issues(std::iter::empty::<&str>(), &mut issues);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].stage, "cgfx_material_texture_missing");
-        assert!(issues[0]
-            .message
-            .contains("were not decoded anywhere in the scanned ROM"));
-    }
-
-    #[test]
-    fn truncated_material_reference_list_is_left_unchanged() {
-        let original = ScanIssue {
-            source: "model.bam".to_owned(),
-            stage: "cgfx_material_texture_missing".to_owned(),
-            message: "offset 0x10: 21 MTOB texture reference(s) were not decoded: a, b, c"
-                .to_owned(),
-        };
-        let mut issues = vec![original.clone()];
-        reconcile_material_reference_issues(["a", "b", "c"], &mut issues);
-        assert_eq!(issues, vec![original]);
     }
 
     #[test]
