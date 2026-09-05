@@ -57,8 +57,12 @@ pub const EO4: GameProfile = GameProfile {
     display_name: "Etrian Odyssey IV: Legends of the Titan",
     family: GameFamily::AtlusEtrian,
     status: ProfileStatus::PlannedResearch,
-    known_title_ids: &[],
-    known_product_families: &[],
+    known_title_ids: &[
+        "0004000000080100",
+        "00040000000BD300",
+        "00040000000EA600",
+    ],
+    known_product_families: &["ASJ"],
 };
 
 pub const EO5: GameProfile = GameProfile {
@@ -67,8 +71,12 @@ pub const EO5: GameProfile = GameProfile {
     display_name: "Etrian Odyssey V: Beyond the Myth",
     family: GameFamily::AtlusEtrian,
     status: ProfileStatus::PlannedResearch,
-    known_title_ids: &[],
-    known_product_families: &[],
+    known_title_ids: &[
+        "000400000018D000",
+        "00040000001C5100",
+        "00040000001C5300",
+    ],
+    known_product_families: &["BMZ"],
 };
 
 pub const EON: GameProfile = GameProfile {
@@ -77,8 +85,12 @@ pub const EON: GameProfile = GameProfile {
     display_name: "Etrian Odyssey Nexus",
     family: GameFamily::AtlusEtrian,
     status: ProfileStatus::PlannedResearch,
-    known_title_ids: &[],
-    known_product_families: &[],
+    known_title_ids: &[
+        "00040000001CA300",
+        "00040000001D4E00",
+        "00040000001D5200",
+    ],
+    known_product_families: &["BZM"],
 };
 
 pub const EMD1: GameProfile = GameProfile {
@@ -166,14 +178,30 @@ mod tests {
         assert_eq!(EMD1.family, GameFamily::MysteryDungeon);
         assert_eq!(EMD2.family, GameFamily::MysteryDungeon);
         assert_eq!(EOU1.family, GameFamily::AtlusEtrian);
+        assert_eq!(EO4.family, GameFamily::AtlusEtrian);
+        assert_eq!(EO5.family, GameFamily::AtlusEtrian);
+        assert_eq!(EON.family, GameFamily::AtlusEtrian);
     }
 
     #[test]
-    fn only_verified_legacy_identifiers_auto_detect_today() {
-        let title: TitleId = "000400000015F200".parse().unwrap();
-        assert_eq!(detect_verified_profile(Some(title), None), Some(&EO2U));
+    fn verified_atlus_eo_identities_auto_detect_without_claiming_parser_support() {
+        let eo4: TitleId = "00040000000BD300".parse().unwrap();
+        let eo5: TitleId = "00040000001C5100".parse().unwrap();
+        let eon: TitleId = "00040000001D4E00".parse().unwrap();
+        let eo2u: TitleId = "000400000015F200".parse().unwrap();
+
+        assert_eq!(detect_verified_profile(Some(eo4), None), Some(&EO4));
+        assert_eq!(detect_verified_profile(Some(eo5), None), Some(&EO5));
+        assert_eq!(detect_verified_profile(Some(eon), None), Some(&EON));
+        assert_eq!(detect_verified_profile(Some(eo2u), None), Some(&EO2U));
+        assert_eq!(detect_verified_profile(None, Some("CTR-P-ASJE")), Some(&EO4));
+        assert_eq!(detect_verified_profile(None, Some("CTR-P-BMZP")), Some(&EO5));
+        assert_eq!(detect_verified_profile(None, Some("CTR-P-BZMJ")), Some(&EON));
         assert_eq!(detect_verified_profile(None, Some("CTR-P-BSK-EUR")), Some(&EOU1));
         assert_eq!(detect_verified_profile(None, Some("UNKNOWN")), None);
+
         assert_eq!(EO4.status, ProfileStatus::PlannedResearch);
+        assert_eq!(EO5.status, ProfileStatus::PlannedResearch);
+        assert_eq!(EON.status, ProfileStatus::PlannedResearch);
     }
 }
