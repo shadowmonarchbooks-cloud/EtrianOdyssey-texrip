@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-rc-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-windows-rc:
     name: Build Windows RC
